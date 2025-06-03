@@ -121,7 +121,7 @@ impl Variant for DiclConfig {
             &mut inference_params,
         )?;
 
-        let model_config = models.models.get(&self.model).await?.ok_or_else(|| {
+        let model_config = models.get_model(&self.model).await?.ok_or_else(|| {
             Error::new(ErrorDetails::UnknownModel {
                 name: self.model.to_string(),
             })
@@ -186,7 +186,7 @@ impl Variant for DiclConfig {
             &mut inference_params,
         )?;
 
-        let model_config = models.models.get(&self.model).await?.ok_or_else(|| {
+        let model_config = models.get_model(&self.model).await?.ok_or_else(|| {
             Error::new(ErrorDetails::UnknownModel {
                 name: self.model.to_string(),
             })

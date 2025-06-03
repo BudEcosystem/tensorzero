@@ -1,0 +1,79 @@
+# Example configuration showing how to use the dynamic model service
+
+[gateway]
+bind_address = "0.0.0.0:3000"
+debug = true
+
+# Configure the dynamic model service
+[dynamic_model_service]
+# URL of your model management service
+service_url = "https://your-model-service.com/api/models"
+# Optional API key for authentication
+api_key = "your-api-key-here"
+# Optional default endpoint name (can be overridden in model name)
+# endpoint_name = "default"
+# How often to refresh the model list (in seconds)
+refresh_interval_secs = 60
+# Timeout for API requests (in seconds)
+request_timeout_secs = 10
+
+# You can still have static models defined in the config
+[models."static-gpt-4"]
+routing = ["openai"]
+
+[models."static-gpt-4".providers.openai]
+type = "openai"
+model_name = "gpt-4"
+
+# Define functions that can use both static and dynamic models
+[functions.chat]
+type = "chat"
+
+[functions.chat.variants.default]
+type = "chat_completion"
+# This model will be looked up dynamically if not found in static config
+# Format: "endpoint::model" or just "model" if default endpoint is configured
+model = "test::dynamic-model-123"
+
+[functions.chat.variants.static]
+type = "chat_completion"
+# This uses the static model defined above
+model = "static-gpt-4"
+
+# Expected format for the model service API response:
+# {
+#   "success": true,
+#   "result": {
+#     "project_id": "...",
+#     "project_name": "...",
+#     "endpoint_name": "test",
+#     "routing_policy": null,
+#     "cache_configuration": null,
+#     "model_configuration": [
+#       {
+#         "model_name": "dynamic-model-123",
+#         "litellm_params": {
+#           "model": "openai/gpt-4",
+#           "api_base": "https://api.openai.com/v1",
+#           "api_key": "sk-..."
+#         },
+#         "model_info": {
+#           "id": "...",
+#           "metadata": {
+#             "name": "gpt-4",
+#             "provider": "OpenAI",
+#             "modality": ["text_input", "text_output"],
+#             "endpoint_id": "...",
+#             "cloud": true,
+#             "deploy_model_uri": "dynamic-model-123"
+#           }
+#         },
+#         "input_cost_per_token": null,
+#         "output_cost_per_token": null,
+#         "tpm": null,
+#         "rpm": null
+#       }
+#     ]
+#   },
+#   "message": "Router config retrieved successfully"
+# }

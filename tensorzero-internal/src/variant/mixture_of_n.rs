@@ -97,7 +97,7 @@ impl Variant for MixtureOfNConfig {
         self.fuse_candidates(
             input,
             function,
-            models.models,
+            models,
             inference_config,
             clients,
             candidate_inference_results,
@@ -285,7 +285,7 @@ impl MixtureOfNConfig {
         &'a self,
         input: &ResolvedInput,
         function: &'a FunctionConfig,
-        models: &'a ModelTable,
+        models: &'a InferenceModels<'a>,
         inference_config: &'request InferenceConfig<'a, 'request>,
         clients: &'request InferenceClients<'request>,
         mut candidates: Vec<InferenceResult>,
@@ -355,7 +355,7 @@ impl MixtureOfNConfig {
 async fn inner_fuse_candidates<'a, 'request>(
     fuser: &'a FuserConfig,
     input: &'request ResolvedInput,
-    models: &'a ModelTable,
+    models: &'a InferenceModels<'a>,
     function: &'a FunctionConfig,
     inference_config: &'request InferenceConfig<'a, 'request>,
     clients: &'request InferenceClients<'request>,
@@ -374,7 +374,7 @@ async fn inner_fuse_candidates<'a, 'request>(
         }
         .into());
     }
-    let model_config = models.get(&fuser.inner.model).await?.ok_or_else(|| {
+    let model_config = models.get_model(&fuser.inner.model).await?.ok_or_else(|| {
         Error::new(ErrorDetails::UnknownModel {
             name: fuser.inner.model.to_string(),
         })

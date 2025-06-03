@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::cache::{CacheOptions, CacheParamsOptions};
 use crate::clickhouse::ClickHouseConnectionInfo;
-use crate::config_parser::{Config, ObjectStoreInfo};
+use crate::config_parser::{Config, ObjectStoreInfo, ProviderTypesConfig};
 use crate::embeddings::EmbeddingModelTable;
 use crate::error::{Error, ErrorDetails};
 use crate::function::FunctionConfig;
@@ -39,7 +39,8 @@ use crate::inference::types::{
     RequestMessage, ResolvedInput, ResolvedInputMessageContent, Usage,
 };
 use crate::jsonschema_util::DynamicJSONSchema;
-use crate::model::ModelTable;
+use crate::model::{ModelTable, ModelConfig};
+use crate::model_table::CowNoClone;
 use crate::tool::{DynamicToolParams, ToolCallConfig, ToolChoice};
 use crate::variant::chat_completion::ChatCompletionConfig;
 use crate::variant::{InferenceConfig, JsonMode, Variant, VariantConfig};
@@ -136,15 +137,11 @@ pub type InferenceCredentials = HashMap<String, SecretString>;
 /// A handler for the inference endpoint
 #[debug_handler(state = AppStateData)]
 pub async fn inference_handler(
-    State(AppStateData {
-        config,
-        http_client,
-        clickhouse_connection_info,
-    }): AppState,
+    State(app_state): AppState,
     StructuredJson(params): StructuredJson<Params>,
 ) -> Result<Response<Body>, Error> {
     let inference_output =
-        inference(config, &http_client, clickhouse_connection_info, params).await?;
+        inference(app_state, params).await?;
     match inference_output {
         InferenceOutput::NonStreaming(response) => Ok(Json(response).into_response()),
         InferenceOutput::Streaming(stream) => {
@@ -184,7 +181,7 @@ pub struct InferenceIds {
 
 #[instrument(
     name="inference",
-    skip(config, http_client, clickhouse_connection_info, params),
+    skip(app_state, params),
     fields(
         function_name,
         model_name,
@@ -195,11 +192,12 @@ pub struct InferenceIds {
     )
 )]
 pub async fn inference(
-    config: Arc<Config<'static>>,
-    http_client: &reqwest::Client,
-    clickhouse_connection_info: ClickHouseConnectionInfo,
+    app_state: AppStateData,
     params: Params,
 ) -> Result<InferenceOutput, Error> {
+    let config = app_state.config.clone();
+    let http_client = &app_state.http_client;
+    let clickhouse_connection_info = app_state.clickhouse_connection_info.clone();
     let span = tracing::Span::current();
     if let Some(function_name) = &params.function_name {
         span.record("function_name", function_name);
@@ -240,7 +238,7 @@ pub async fn inference(
     .await?;
     tracing::Span::current().record("episode_id", episode_id.to_string());
 
-    let (function, function_name) = find_function(&params, &config)?;
+    let (function, function_name) = find_function(&params, &config, app_state.dynamic_model_cache.as_deref()).await?;
     // Collect the function variant names as a Vec<&str>
     let mut candidate_variant_names: Vec<&str> =
         function.variants().keys().map(AsRef::as_ref).collect();
@@ -334,6 +332,7 @@ pub async fn inference(
     let inference_models = InferenceModels {
         models: &config.models,
         embedding_models: &config.embedding_models,
+        provider_types: &config.provider_types,
     };
     let resolved_input = params
         .input
@@ -505,7 +504,11 @@ pub async fn inference(
 /// invalid combination of parameters is provided.
 /// If `model_name` is specified, then we use the special 'default' function
 /// Returns the function config and the function name
-fn find_function(params: &Params, config: &Config) -> Result<(Arc<FunctionConfig>, String), Error> {
+async fn find_function(
+    params: &Params, 
+    config: &Config<'_>, 
+    dynamic_model_cache: Option<&crate::dynamic_models::DynamicModelCache>
+) -> Result<(Arc<FunctionConfig>, String), Error> {
     match (&params.function_name, &params.model_name) {
         // Get the function config or return an error if it doesn't exist
         (Some(function_name), None) => Ok((
@@ -520,9 +523,28 @@ fn find_function(params: &Params, config: &Config) -> Result<(Arc<FunctionConfig
                 }
                 .into());
             }
-            if let Err(e) = config.models.validate(model_name) {
+            // First check static model table
+            let model_exists = if config.models.validate(model_name).is_ok() {
+                true
+            } else if let Some(cache) = dynamic_model_cache {
+                // If not in static table, check dynamic cache
+                // The cache.get_model method handles parsing of "endpoint::model" format
+                match cache.get_model(model_name).await {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(e) => {
+                        // If it's a parsing error, it means the format is invalid
+                        tracing::debug!("Error checking dynamic model '{}': {}", model_name, e);
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+            
+            if !model_exists {
                 return Err(ErrorDetails::InvalidInferenceTarget {
-                    message: format!("Invalid model name: {e}"),
+                    message: format!("Invalid model name: Model name '{}' not found in model table", model_name),
                 }
                 .into());
             }
@@ -1061,6 +1083,18 @@ pub struct InferenceClients<'a> {
 pub struct InferenceModels<'a> {
     pub models: &'a ModelTable,
     pub embedding_models: &'a EmbeddingModelTable,
+    pub provider_types: &'a ProviderTypesConfig,
+}
+
+impl<'a> InferenceModels<'a> {
+    /// Get a model by name
+    pub async fn get_model(
+        &self,
+        model_name: &Arc<str>,
+    ) -> Result<Option<CowNoClone<'a, ModelConfig>>, Error> {
+        // Simply check the model table - dynamic models are now in the same table
+        self.models.get(model_name).await
+    }
 }
 
 /// InferenceParams is the top-level struct for inference parameters.

@@ -54,6 +54,7 @@ pub struct Config<'c> {
     pub templates: TemplateConfig<'c>,
     pub object_store_info: Option<ObjectStoreInfo>,
     pub provider_types: ProviderTypesConfig,
+    pub dynamic_model_service: Option<crate::dynamic_models::DynamicModelServiceConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -404,6 +405,7 @@ impl<'c> Config<'c> {
             templates,
             object_store_info,
             provider_types: uninitialized_config.provider_types,
+            dynamic_model_service: uninitialized_config.dynamic_model_service,
         };
 
         // Initialize the templates
@@ -601,16 +603,28 @@ impl<'c> Config<'c> {
         })
     }
 
-    /// Get a model by name
+    /// Get a model by name, checking dynamic models if configured
     pub async fn get_model<'a>(
         &'a self,
         model_name: &Arc<str>,
+        dynamic_cache: Option<&Arc<crate::dynamic_models::DynamicModelCache>>,
     ) -> Result<CowNoClone<'a, ModelConfig>, Error> {
-        self.models.get(model_name).await?.ok_or_else(|| {
-            Error::new(ErrorDetails::UnknownModel {
-                name: model_name.to_string(),
-            })
-        })
+        // First try the static model table
+        if let Some(model) = self.models.get(model_name).await? {
+            return Ok(model);
+        }
+
+        // If not found and we have a dynamic cache, try that
+        if let Some(cache) = dynamic_cache {
+            if let Some(model_info) = cache.get_model(model_name).await? {
+                let model_config = cache.to_model_config(&model_info, &self.provider_types)?;
+                return Ok(CowNoClone::Owned(model_config));
+            }
+        }
+
+        Err(Error::new(ErrorDetails::UnknownModel {
+            name: model_name.to_string(),
+        }))
     }
 
     /// Get all templates from the config
@@ -667,6 +681,7 @@ struct UninitializedConfig {
     #[serde(default)]
     pub provider_types: ProviderTypesConfig, // global configuration for all model providers of a particular type
     pub object_storage: Option<StorageKind>,
+    pub dynamic_model_service: Option<crate::dynamic_models::DynamicModelServiceConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]

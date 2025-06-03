@@ -5,6 +5,8 @@
 pub mod cache;
 pub mod clickhouse;
 pub mod config_parser; // TensorZero config file
+pub mod dynamic_models; // dynamic model loading from external service
+pub mod dynamic_model_updater; // simplified dynamic model updater
 pub mod embeddings; // embedding inference
 pub mod endpoints; // API endpoints
 pub mod error; // error handling

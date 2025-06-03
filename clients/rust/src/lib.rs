@@ -291,6 +291,7 @@ impl ClientBuilder {
                                 config,
                                 http_client,
                                 clickhouse_connection_info,
+                                dynamic_model_cache: None,
                             },
                         },
                         timeout: *timeout,
@@ -465,9 +466,7 @@ impl Client {
             ClientMode::EmbeddedGateway { gateway, timeout } => {
                 Ok(with_embedded_timeout(*timeout, async {
                     tensorzero_internal::endpoints::inference::inference(
-                        gateway.state.config.clone(),
-                        &gateway.state.http_client,
-                        gateway.state.clickhouse_connection_info.clone(),
+                        gateway.state.clone(),
                         params.try_into().map_err(err_to_http)?,
                     )
                     .await

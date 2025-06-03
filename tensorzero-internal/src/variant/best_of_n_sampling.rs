@@ -121,7 +121,7 @@ impl Variant for BestOfNSamplingConfig {
             .await?;
         self.select_best_candidate(
             input,
-            models.models,
+            models,
             inference_config,
             clients,
             candidate_inference_results,
@@ -308,7 +308,7 @@ impl BestOfNSamplingConfig {
     async fn select_best_candidate<'a, 'request>(
         &'a self,
         input: &ResolvedInput,
-        models: &ModelTable,
+        models: &InferenceModels<'a>,
         inference_config: &'request InferenceConfig<'a, 'request>,
         clients: &'request InferenceClients<'request>,
         candidates: Vec<InferenceResult>,
@@ -399,7 +399,7 @@ impl BestOfNSamplingConfig {
 async fn inner_select_best_candidate<'a, 'request>(
     evaluator: &'a EvaluatorConfig,
     input: &'request ResolvedInput,
-    models: &'a ModelTable,
+    models: &'a InferenceModels<'a>,
     inference_config: &'request InferenceConfig<'a, 'request>,
     clients: &'request InferenceClients<'request>,
     candidates: &[InferenceResult],
@@ -428,7 +428,7 @@ async fn inner_select_best_candidate<'a, 'request>(
         // Return the selected index and None for the model inference result
         return Ok((Some(selected_index), None));
     }
-    let model_config = models.get(&evaluator.inner.model).await?.ok_or_else(|| {
+    let model_config = models.get_model(&evaluator.inner.model).await?.ok_or_else(|| {
         Error::new(ErrorDetails::UnknownModel {
             name: evaluator.inner.model.to_string(),
         })

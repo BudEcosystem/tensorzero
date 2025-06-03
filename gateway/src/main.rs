@@ -169,6 +169,24 @@ async fn main() {
     let app_state = gateway_util::AppStateData::new(config.clone())
         .await
         .expect_pretty("Failed to initialize AppState");
+    
+    // Start dynamic model updater if configured
+    if let Some(dynamic_service_config) = &config.dynamic_model_service {
+        let models_table = Arc::new(tokio::sync::RwLock::new(config.models.clone()));
+        let provider_types = Arc::new(config.provider_types.clone());
+        let service_config = dynamic_service_config.clone();
+        
+        // Spawn background task to periodically update models
+        tokio::spawn(async move {
+            tensorzero_internal::dynamic_model_updater::start_dynamic_model_updater(
+                models_table,
+                provider_types,
+                service_config,
+            ).await;
+        });
+        
+        tracing::info!("Started dynamic model updater background task");
+    }
 
     // Create a new observability_enabled_pretty string for the log message below
     let observability_enabled_pretty = match &app_state.clickhouse_connection_info {

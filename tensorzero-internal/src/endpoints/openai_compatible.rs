@@ -49,11 +49,7 @@ use super::inference::{
 /// A handler for the OpenAI-compatible inference endpoint
 #[debug_handler(state = AppStateData)]
 pub async fn inference_handler(
-    State(AppStateData {
-        config,
-        http_client,
-        clickhouse_connection_info,
-    }): AppState,
+    State(app_state): AppState,
     headers: HeaderMap,
     StructuredJson(openai_compatible_params): StructuredJson<OpenAICompatibleParams>,
 ) -> Result<Response<Body>, Error> {
@@ -86,7 +82,7 @@ pub async fn inference_handler(
         .into()),
     }?;
 
-    let response = inference(config, &http_client, clickhouse_connection_info, params).await?;
+    let response = inference(app_state, params).await?;
 
     match response {
         InferenceOutput::NonStreaming(response) => {

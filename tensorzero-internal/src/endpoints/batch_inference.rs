@@ -104,13 +104,12 @@ pub type BatchOutputSchemas = Vec<Option<Value>>;
 )]
 #[debug_handler(state = AppStateData)]
 pub async fn start_batch_inference_handler(
-    State(AppStateData {
-        config,
-        http_client,
-        clickhouse_connection_info,
-    }): AppState,
+    State(app_state): AppState,
     StructuredJson(params): StructuredJson<StartBatchInferenceParams>,
 ) -> Result<Response<Body>, Error> {
+    let config = &app_state.config;
+    let http_client = &app_state.http_client;
+    let clickhouse_connection_info = &app_state.clickhouse_connection_info;
     // Get the function config or return an error if it doesn't exist
     let function = config.get_function(&params.function_name)?;
     let num_inferences = params.inputs.len();
@@ -215,6 +214,7 @@ pub async fn start_batch_inference_handler(
     let inference_models = InferenceModels {
         models: &config.models,
         embedding_models: &config.embedding_models,
+        provider_types: &config.provider_types,
     };
     let inference_params: Vec<InferenceParams> =
         BatchInferenceParamsWithSize(params.params, num_inferences).try_into()?;
@@ -339,6 +339,7 @@ pub async fn poll_batch_inference_handler(
         config,
         http_client,
         clickhouse_connection_info,
+        dynamic_model_cache: _,
     }): AppState,
     Path(path_params): Path<PollPathParams>,
 ) -> Result<Response<Body>, Error> {

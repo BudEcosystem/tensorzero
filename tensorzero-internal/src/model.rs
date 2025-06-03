@@ -39,6 +39,7 @@ use crate::inference::types::{
     ProviderInferenceResponseChunk, ProviderInferenceResponseStreamInner, RequestMessage, Usage,
 };
 use crate::model_table::{BaseModelTable, ShorthandModelConfig};
+use crate::dynamic_models::DynamicModelCache;
 use crate::{
     endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails},
@@ -1504,6 +1505,44 @@ const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
 ];
 
 pub type ModelTable = BaseModelTable<ModelConfig>;
+
+/// Extended model table that can integrate with dynamic model service
+pub struct DynamicModelTable {
+    base: ModelTable,
+    dynamic_cache: Option<Arc<DynamicModelCache>>,
+    provider_types: Arc<ProviderTypesConfig>,
+}
+
+impl DynamicModelTable {
+    pub fn new(
+        base: ModelTable, 
+        dynamic_cache: Option<Arc<DynamicModelCache>>,
+        provider_types: Arc<ProviderTypesConfig>
+    ) -> Self {
+        Self {
+            base,
+            dynamic_cache,
+            provider_types,
+        }
+    }
+
+    pub async fn get(&self, key: &str) -> Result<Option<crate::model_table::CowNoClone<'_, ModelConfig>>, Error> {
+        // First try the static model table
+        if let Some(model) = self.base.get(key).await? {
+            return Ok(Some(model));
+        }
+
+        // If not found and we have a dynamic cache, try that
+        if let Some(cache) = &self.dynamic_cache {
+            if let Some(model_info) = cache.get_model(key).await? {
+                let model_config = cache.to_model_config(&model_info, &self.provider_types)?;
+                return Ok(Some(crate::model_table::CowNoClone::Owned(model_config)));
+            }
+        }
+
+        Ok(None)
+    }
+}
 
 impl ShorthandModelConfig for ModelConfig {
     const SHORTHAND_MODEL_PREFIXES: &[&str] = SHORTHAND_MODEL_PREFIXES;
