@@ -5,6 +5,11 @@
 pub mod cache;
 pub mod clickhouse;
 pub mod config_parser; // TensorZero config file
+pub mod dynamic_model_table; // dynamic model table with Redis support
+pub mod dynamic_models_middleware; // middleware for dynamic model updates
+pub mod dynamic_models_integration; // integration layer for dynamic models
+pub mod dynamic_models_validation; // validation helpers for dynamic models
+pub mod dynamic_models_registry; // global registry for dynamic models
 pub mod embeddings; // embedding inference
 pub mod endpoints; // API endpoints
 pub mod error; // error handling

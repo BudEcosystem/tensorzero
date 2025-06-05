@@ -16,12 +16,15 @@ use tower_http::trace::{DefaultOnFailure, TraceLayer};
 use tracing::Level;
 
 use tensorzero_internal::clickhouse::ClickHouseConnectionInfo;
-use tensorzero_internal::config_parser::Config;
+use tensorzero_internal::config_parser::{Config, ProviderTypesConfig};
 use tensorzero_internal::endpoints;
 use tensorzero_internal::endpoints::status::TENSORZERO_VERSION;
 use tensorzero_internal::error;
 use tensorzero_internal::gateway_util;
 use tensorzero_internal::observability::{self, LogFormat, RouterExt};
+use tensorzero_internal::dynamic_models_middleware::{
+    DynamicModelsState, DynamicModelsConfig, dynamic_models_middleware
+};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -170,6 +173,64 @@ async fn main() {
         .await
         .expect_pretty("Failed to initialize AppState");
 
+    // Initialize dynamic models if enabled
+    let dynamic_models_state = if std::env::var("TENSORZERO_DYNAMIC_MODELS_ENABLED")
+        .unwrap_or_else(|_| "false".to_string())
+        .parse::<bool>()
+        .unwrap_or(false)
+    {
+        // Initialize the global registry first
+        // We need to wrap provider_types in Arc - we can't clone it directly
+        // since it doesn't implement Clone
+        let provider_types = Arc::new(ProviderTypesConfig {
+            gcp_vertex_gemini: config.provider_types.gcp_vertex_gemini.clone(),
+        });
+        tensorzero_internal::dynamic_models_registry::DynamicModelsRegistry::init(
+            provider_types
+        ).await
+            .expect_pretty("Failed to initialize dynamic models registry");
+        // Get Redis configuration from environment
+        let redis_url = std::env::var("TENSORZERO_REDIS_URL")
+            .expect_pretty("TENSORZERO_REDIS_URL must be set when dynamic models are enabled");
+        let stream_name = std::env::var("TENSORZERO_REDIS_STREAM")
+            .unwrap_or_else(|_| "tensorzero:model_updates".to_string());
+        let consumer_group = std::env::var("TENSORZERO_REDIS_CONSUMER_GROUP")
+            .unwrap_or_else(|_| "gateway_group".to_string());
+        let consumer_name = std::env::var("TENSORZERO_REDIS_CONSUMER_NAME")
+            .unwrap_or_else(|_| format!("gateway_{}", std::process::id()));
+        let poll_interval = std::env::var("TENSORZERO_REDIS_POLL_INTERVAL")
+            .unwrap_or_else(|_| "1000".to_string())
+            .parse::<u64>()
+            .unwrap_or(1000);
+
+        // Create dynamic models configuration
+        let dynamic_config = DynamicModelsConfig {
+            enabled: true,
+            redis_url: redis_url.clone(),
+            stream_name: stream_name.clone(),
+            consumer_group: consumer_group.clone(),
+            consumer_name: consumer_name.clone(),
+            poll_interval_ms: poll_interval,
+        };
+
+        // Initialize dynamic models state with global registry
+        let dynamic_state = Arc::new(
+            DynamicModelsState::new_with_global_registry(dynamic_config).await
+        );
+        dynamic_state.start_listener().await
+            .expect_pretty("Failed to start dynamic models Redis listener");
+
+        tracing::info!(
+            "Dynamic models enabled: Redis={}, Stream={}, Group={}, Consumer={}",
+            redis_url, stream_name, consumer_group, consumer_name
+        );
+
+        Some(dynamic_state)
+    } else {
+        tracing::info!("Dynamic models disabled");
+        None
+    };
+
     // Create a new observability_enabled_pretty string for the log message below
     let observability_enabled_pretty = match &app_state.clickhouse_connection_info {
         ClickHouseConnectionInfo::Disabled => "disabled".to_string(),
@@ -184,7 +245,7 @@ async fn main() {
     // Set debug mode
     error::set_debug(config.gateway.debug).expect_pretty("Failed to set debug mode");
 
-    let router = Router::new()
+    let mut router = Router::new()
         .route("/inference", post(endpoints::inference::inference_handler))
         .route(
             "/batch_inference",
@@ -250,7 +311,16 @@ async fn main() {
             "/metrics",
             get(move || std::future::ready(metrics_handle.render())),
         )
-        .fallback(endpoints::fallback::handle_404)
+        .fallback(endpoints::fallback::handle_404);
+
+    // Add dynamic models middleware if enabled
+    if let Some(dynamic_state) = dynamic_models_state {
+        router = router.layer(axum::middleware::from_fn(move |req, next| {
+            dynamic_models_middleware(dynamic_state.clone(), req, next)
+        }));
+    }
+
+    let router = router
         .layer(axum::middleware::from_fn(add_version_header))
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024)) // increase the default body limit from 2MB to 100MB
         // Note - this is intentionally *not* used by our OTEL exporter (it creates a span without any `http.` or `otel.` fields)

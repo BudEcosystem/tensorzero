@@ -317,7 +317,7 @@ impl Variant for ChatCompletionConfig {
             false,
             &mut inference_params,
         )?;
-        let model_config = models.models.get(&self.model).await?.ok_or_else(|| {
+        let model_config = models.get_model(&self.model).await?.ok_or_else(|| {
             Error::new(ErrorDetails::UnknownModel {
                 name: self.model.to_string(),
             })
@@ -352,7 +352,7 @@ impl Variant for ChatCompletionConfig {
             true,
             &mut inference_params,
         )?;
-        let model_config = models.models.get(&self.model).await?.ok_or_else(|| {
+        let model_config = models.get_model(&self.model).await?.ok_or_else(|| {
             Error::new(ErrorDetails::UnknownModel {
                 name: self.model.to_string(),
             })
@@ -476,7 +476,7 @@ impl Variant for ChatCompletionConfig {
                 self.prepare_request(input, function, inference_config, false, inference_param)?;
             inference_requests.push(request);
         }
-        let model_config = models.models.get(&self.model).await?.ok_or_else(|| {
+        let model_config = models.get_model(&self.model).await?.ok_or_else(|| {
             Error::new(ErrorDetails::UnknownModel {
                 name: self.model.to_string(),
             })

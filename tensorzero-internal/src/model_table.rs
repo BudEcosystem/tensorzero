@@ -115,6 +115,13 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
                 T::from_shorthand(shorthand.provider_type, shorthand.model_name).await?,
             )));
         }
+        
+        // Note: Dynamic models are only checked during validation, not during get()
+        // This is because get() returns a generic type T, and we can't easily convert
+        // from ModelConfig to T without unsafe code.
+        // The actual model retrieval for dynamic models happens in the inference handler
+        // after validation passes.
+        
         Ok(None)
     }
     /// Check that a model name is valid
@@ -129,6 +136,19 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
 
         if check_shorthand(T::SHORTHAND_MODEL_PREFIXES, key).is_some() {
             return Ok(());
+        }
+
+        // Check if this is a dynamic model reference
+        if let Some(dynamic_model_name) = crate::dynamic_models_registry::is_dynamic_model_reference(key) {
+            // Use block_on to call async function in sync context
+            let has_model = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(
+                    crate::dynamic_models_registry::DynamicModelsRegistry::has_model(dynamic_model_name)
+                )
+            });
+            if has_model {
+                return Ok(());
+            }
         }
 
         Err(ErrorDetails::Config {

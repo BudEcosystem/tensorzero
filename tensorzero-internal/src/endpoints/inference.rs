@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::cache::{CacheOptions, CacheParamsOptions};
 use crate::clickhouse::ClickHouseConnectionInfo;
 use crate::config_parser::{Config, ObjectStoreInfo};
+use crate::dynamic_models_registry::{DynamicModelsRegistry, is_dynamic_model_reference};
 use crate::embeddings::EmbeddingModelTable;
 use crate::error::{Error, ErrorDetails};
 use crate::function::FunctionConfig;
@@ -39,7 +40,8 @@ use crate::inference::types::{
     RequestMessage, ResolvedInput, ResolvedInputMessageContent, Usage,
 };
 use crate::jsonschema_util::DynamicJSONSchema;
-use crate::model::ModelTable;
+use crate::model::{ModelTable, ModelConfig};
+use crate::model_table::CowNoClone;
 use crate::tool::{DynamicToolParams, ToolCallConfig, ToolChoice};
 use crate::variant::chat_completion::ChatCompletionConfig;
 use crate::variant::{InferenceConfig, JsonMode, Variant, VariantConfig};
@@ -520,19 +522,39 @@ fn find_function(params: &Params, config: &Config) -> Result<(Arc<FunctionConfig
                 }
                 .into());
             }
-            if let Err(e) = config.models.validate(model_name) {
-                return Err(ErrorDetails::InvalidInferenceTarget {
-                    message: format!("Invalid model name: {e}"),
+            // Check if this is a dynamic model
+            let is_dynamic_model = if let Err(_) = config.models.validate(model_name) {
+                // If validation fails, check if it exists as a dynamic model
+                let is_dynamic = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(
+                        DynamicModelsRegistry::has_model(model_name)
+                    )
+                });
+                
+                if !is_dynamic {
+                    return Err(ErrorDetails::InvalidInferenceTarget {
+                        message: format!("Model '{}' not found in static or dynamic models", model_name),
+                    }
+                    .into());
                 }
-                .into());
-            }
+                true
+            } else {
+                false
+            };
+
+            // If it's a dynamic model, we need to use the prefixed name for lookup
+            let effective_model_name = if is_dynamic_model {
+                format!("tensorzero::model_name::{}", model_name)
+            } else {
+                model_name.to_string()
+            };
 
             Ok((
                 Arc::new(FunctionConfig::Chat(FunctionConfigChat {
                     variants: [(
                         model_name.clone(),
                         VariantConfig::ChatCompletion(ChatCompletionConfig {
-                            model: (&**model_name).into(),
+                            model: effective_model_name.into(),
                             ..Default::default()
                         }),
                     )]
@@ -1061,6 +1083,24 @@ pub struct InferenceClients<'a> {
 pub struct InferenceModels<'a> {
     pub models: &'a ModelTable,
     pub embedding_models: &'a EmbeddingModelTable,
+}
+
+impl<'a> InferenceModels<'a> {
+    /// Get a model, checking dynamic models first if the name has the special prefix
+    pub async fn get_model(&self, model_name: &str) -> Result<Option<CowNoClone<'_, ModelConfig>>, Error> {
+        // Check if this is a dynamic model reference
+        if let Some(dynamic_model_name) = is_dynamic_model_reference(model_name) {
+            // Try to get from dynamic registry
+            if let Some(model_config) = DynamicModelsRegistry::get_model(dynamic_model_name).await? {
+                return Ok(Some(CowNoClone::Owned(model_config)));
+            }
+            // If not found in dynamic registry, fall through to static lookup
+            // This allows for a graceful fallback
+        }
+        
+        // Use the normal model table lookup
+        self.models.get(model_name).await
+    }
 }
 
 /// InferenceParams is the top-level struct for inference parameters.
