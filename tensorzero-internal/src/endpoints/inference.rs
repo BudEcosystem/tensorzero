@@ -1094,6 +1094,8 @@ pub struct ChatCompletionInferenceParams {
     pub frequency_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json_mode: Option<JsonMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<bool>,
 }
 
 impl ChatCompletionInferenceParams {

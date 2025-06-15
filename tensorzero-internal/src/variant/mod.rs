@@ -493,6 +493,7 @@ where
                 presence_penalty: inference_params.chat_completion.presence_penalty,
                 frequency_penalty: inference_params.chat_completion.frequency_penalty,
                 seed: inference_params.chat_completion.seed,
+                logprobs: inference_params.chat_completion.logprobs,
                 stream,
                 // In chat mode, we fall back to 'JsonMode::Off' - json mode will only be enabled if
                 // explicitly requested in `chat_completion` params.
@@ -529,6 +530,7 @@ where
                 presence_penalty: inference_params.chat_completion.presence_penalty,
                 frequency_penalty: inference_params.chat_completion.frequency_penalty,
                 seed: inference_params.chat_completion.seed,
+                logprobs: inference_params.chat_completion.logprobs,
                 stream,
                 // In json mode, we fall back to 'JsonMode::Strict' if it was unset in both
                 // the `chat_completions` params and the variant config.

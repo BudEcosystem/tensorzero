@@ -260,6 +260,7 @@ pub struct OpenAICompatibleParams {
     tool_choice: Option<ChatCompletionToolChoiceOption>,
     top_p: Option<f32>,
     parallel_tool_calls: Option<bool>,
+    logprobs: Option<bool>,
     #[serde(rename = "tensorzero::variant_name")]
     tensorzero_variant_name: Option<String>,
     #[serde(rename = "tensorzero::dryrun")]
@@ -434,6 +435,7 @@ impl Params {
             presence_penalty: openai_compatible_params.presence_penalty,
             frequency_penalty: openai_compatible_params.frequency_penalty,
             json_mode,
+            logprobs: openai_compatible_params.logprobs,
         };
         let inference_params = InferenceParams {
             chat_completion: chat_completion_inference_params,

@@ -693,6 +693,7 @@ impl EvaluatorConfig {
                 top_p: inference_params.chat_completion.top_p,
                 presence_penalty: inference_params.chat_completion.presence_penalty,
                 frequency_penalty: inference_params.chat_completion.frequency_penalty,
+                logprobs: inference_params.chat_completion.logprobs,
                 stream: false,
                 json_mode: json_mode.into(),
                 function_type: FunctionType::Json,

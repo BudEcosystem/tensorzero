@@ -411,6 +411,7 @@ pub struct ModelInferenceRequest<'a> {
     pub presence_penalty: Option<f32>,
     pub frequency_penalty: Option<f32>,
     pub seed: Option<u32>,
+    pub logprobs: Option<bool>,
     pub stream: bool,
     pub json_mode: ModelInferenceRequestJsonMode,
     pub function_type: FunctionType,
