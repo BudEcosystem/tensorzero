@@ -1,4 +1,5 @@
 #![expect(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+mod auth;
 mod batch;
 mod best_of_n;
 mod cache;
