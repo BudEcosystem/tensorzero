@@ -3,7 +3,8 @@ use aws_sdk_bedrockruntime::operation::converse_stream::ConverseStreamOutput;
 use aws_sdk_bedrockruntime::types::{
     AnyToolChoice, AutoToolChoice, ContentBlock as BedrockContentBlock, ContentBlockDelta,
     ContentBlockStart, ConversationRole, ConverseOutput as ConverseOutputType,
-    ConverseStreamOutput as ConverseStreamOutputType, InferenceConfiguration, Message,
+    ConverseStreamOutput as ConverseStreamOutputType, DocumentBlock, DocumentFormat,
+    DocumentSource, ImageBlock, ImageFormat, ImageSource, InferenceConfiguration, Message,
     SpecificToolChoice, StopReason, SystemContentBlock, Tool, ToolChoice as AWSBedrockToolChoice,
     ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock, ToolSpecification,
     ToolUseBlock,
@@ -24,6 +25,8 @@ use crate::error::{DisplayOrDebugGateway, Error, ErrorDetails};
 use crate::inference::providers::provider_trait::InferenceProvider;
 use crate::inference::types::batch::BatchRequestRow;
 use crate::inference::types::batch::PollBatchInferenceResponse;
+use crate::inference::types::file::mime_type_to_ext;
+use crate::inference::types::resolved_input::FileWithPath;
 use crate::inference::types::{
     batch::StartBatchProviderInferenceResponse, ContentBlock, ContentBlockChunk,
     ContentBlockOutput, FunctionType, Latency, ModelInferenceRequest,
@@ -104,6 +107,10 @@ impl InferenceProvider for AWSBedrockProvider {
         }
         if let Some(top_p) = request.top_p {
             inference_config = inference_config.top_p(top_p);
+        }
+        if let Some(stop_sequences) = request.stop_sequences.to_owned() {
+            inference_config =
+                inference_config.set_stop_sequences(Some(stop_sequences.into_owned()));
         }
         let mut bedrock_request = self
             .client
@@ -233,6 +240,13 @@ impl InferenceProvider for AWSBedrockProvider {
         if let Some(temperature) = request.temperature {
             inference_config = inference_config.temperature(temperature);
         }
+        if let Some(top_p) = request.top_p {
+            inference_config = inference_config.top_p(top_p);
+        }
+        if let Some(stop_sequences) = request.stop_sequences.to_owned() {
+            inference_config =
+                inference_config.set_stop_sequences(Some(stop_sequences.into_owned()));
+        }
 
         let mut bedrock_request = self
             .client
@@ -353,7 +367,6 @@ fn stream_bedrock(
 ) -> ProviderInferenceResponseStreamInner {
     Box::pin(async_stream::stream! {
         let mut current_tool_id : Option<String> = None;
-        let mut current_tool_name: Option<String> = None;
 
         loop {
             let ev = stream.stream.recv().await;
@@ -374,7 +387,7 @@ fn stream_bedrock(
                         // NOTE: AWS Bedrock returns usage (ConverseStreamMetadataEvent) AFTER MessageStop.
 
                         // Convert the event to a tensorzero stream message
-                        let stream_message = bedrock_to_tensorzero_stream_message(output, start_time.elapsed(), &mut current_tool_id, &mut current_tool_name);
+                        let stream_message = bedrock_to_tensorzero_stream_message(output, start_time.elapsed(), &mut current_tool_id);
 
                         match stream_message {
                             Ok(None) => {},
@@ -392,7 +405,6 @@ fn bedrock_to_tensorzero_stream_message(
     output: ConverseStreamOutputType,
     message_latency: Duration,
     current_tool_id: &mut Option<String>,
-    current_tool_name: &mut Option<String>,
 ) -> Result<Option<ProviderInferenceResponseChunk>, Error> {
     match output {
         ConverseStreamOutputType::ContentBlockDelta(message) => {
@@ -416,12 +428,7 @@ fn bedrock_to_tensorzero_stream_message(
                             // This is necessary because the ToolCallChunk must always contain the tool name and ID
                             // even though AWS Bedrock only sends the tool ID and name in the ToolUse chunk and not InputJSONDelta
                             vec![ContentBlockChunk::ToolCall(ToolCallChunk {
-                                raw_name: current_tool_name.clone().ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
-                                    message: "Got InputJsonDelta chunk from AWS Bedrock without current tool name being set by a ToolUse".to_string(),
-                                    provider_type: PROVIDER_TYPE.to_string(),
-                                    raw_request: None,
-                                    raw_response: None,
-                                }))?,
+                                raw_name: None,
                                 id: current_tool_id.clone().ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
                                     message: "Got InputJsonDelta chunk from AWS Bedrock without current tool id being set by a ToolUse".to_string(),
                                     provider_type: PROVIDER_TYPE.to_string(),
@@ -455,11 +462,10 @@ fn bedrock_to_tensorzero_stream_message(
                 Some(ContentBlockStart::ToolUse(tool_use)) => {
                     // This is a new tool call, update the ID for future chunks
                     *current_tool_id = Some(tool_use.tool_use_id.clone());
-                    *current_tool_name = Some(tool_use.name.clone());
                     Ok(Some(ProviderInferenceResponseChunk::new(
                         vec![ContentBlockChunk::ToolCall(ToolCallChunk {
                             id: tool_use.tool_use_id,
-                            raw_name: tool_use.name,
+                            raw_name: Some(tool_use.name),
                             raw_arguments: "".to_string(),
                         })],
                         None,
@@ -611,10 +617,61 @@ impl TryFrom<&ContentBlock> for Option<BedrockContentBlock> {
 
                 Ok(Some(BedrockContentBlock::ToolResult(tool_result_block)))
             }
-            ContentBlock::File(_) => Err(Error::new(ErrorDetails::UnsupportedContentBlockType {
-                content_block_type: "image".to_string(),
-                provider_type: PROVIDER_TYPE.to_string(),
-            })),
+            ContentBlock::File(file) => {
+                let FileWithPath {
+                    file,
+                    storage_path: _,
+                } = &**file;
+                let file_bytes = aws_smithy_types::base64::decode(file.data()?).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        raw_request: None,
+                        raw_response: None,
+                        status_code: Some(StatusCode::BAD_REQUEST),
+                        message: format!("File was not valid base64: {e:?}"),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+                if file.mime_type.type_() == mime::IMAGE {
+                    let image_block = ImageBlock::builder()
+                        .format(ImageFormat::from(file.mime_type.subtype()))
+                        .source(ImageSource::Bytes(file_bytes.into()))
+                        .build()
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InferenceClient {
+                                raw_request: None,
+                                raw_response: None,
+                                status_code: Some(StatusCode::BAD_REQUEST),
+                                message: format!("Error serializing image block: {e:?}"),
+                                provider_type: PROVIDER_TYPE.to_string(),
+                            })
+                        })?;
+                    Ok(Some(BedrockContentBlock::Image(image_block)))
+                } else {
+                    // Best-effort attempt to produce an AWS DocumentFormat, as their API doesn't support mime types
+                    let suffix = mime_type_to_ext(&file.mime_type)?.ok_or_else(|| {
+                        Error::new(ErrorDetails::InvalidMessage {
+                            message: format!("Mime type {} has no filetype suffix", file.mime_type),
+                        })
+                    })?;
+                    let document_format = DocumentFormat::from(suffix);
+                    let document = DocumentBlock::builder()
+                        .format(document_format)
+                        // TODO: Should we allow the user to specify the file name?
+                        .name("input")
+                        .source(DocumentSource::Bytes(file_bytes.into()))
+                        .build()
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InferenceClient {
+                                raw_request: None,
+                                raw_response: None,
+                                status_code: Some(StatusCode::BAD_REQUEST),
+                                message: format!("Error serializing document block: {e:?}"),
+                                provider_type: PROVIDER_TYPE.to_string(),
+                            })
+                        })?;
+                    Ok(Some(BedrockContentBlock::Document(document)))
+                }
+            }
             // We don't support thought blocks being passed in from a request.
             // These are only possible to be passed in in the scenario where the
             // output of a chat completion is used as an input to another model inference,
@@ -712,7 +769,7 @@ fn aws_stop_reason_to_tensorzero_finish_reason(stop_reason: StopReason) -> Optio
         StopReason::EndTurn => Some(FinishReason::Stop),
         StopReason::GuardrailIntervened => Some(FinishReason::ContentFilter),
         StopReason::MaxTokens => Some(FinishReason::Length),
-        StopReason::StopSequence => Some(FinishReason::Stop),
+        StopReason::StopSequence => Some(FinishReason::StopSequence),
         StopReason::ToolUse => Some(FinishReason::ToolCall),
         _ => Some(FinishReason::Unknown),
     }
