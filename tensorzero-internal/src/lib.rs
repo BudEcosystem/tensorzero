@@ -2,6 +2,7 @@
 // traits with async fns for now.
 #![expect(async_fn_in_trait)]
 
+pub mod auth_middleware; // API key authentication middleware
 pub mod cache;
 pub mod clickhouse;
 pub mod config_parser; // TensorZero config file

@@ -69,6 +69,20 @@ pub struct GatewayConfig {
     pub enable_template_filesystem_access: bool,
     #[serde(default)]
     pub export: ExportConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct AuthConfig {
+    /// If `true`, enable API key authentication for the gateway
+    /// Defaults to `false`
+    #[serde(default)]
+    pub enabled: bool,
+    /// Static API keys that can be used to authenticate requests
+    /// Keys should be provided via the `Authorization: Bearer <key>` header
+    #[serde(default)]
+    pub static_api_keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -1,0 +1,24 @@
+# Test configuration for authentication middleware
+[gateway]
+bind_address = "0.0.0.0:3000"
+debug = true
+
+# Authentication configuration
+[gateway.auth]
+enabled = true
+static_api_keys = [
+    "test-key-1", 
+    "test-key-2", 
+    "development-key"
+]
+
+[object_storage]
+type = "disabled"
+
+# Add a simple model for testing
+[models."test-model"]
+routing = ["openai"]
+
+[models."test-model".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini"
