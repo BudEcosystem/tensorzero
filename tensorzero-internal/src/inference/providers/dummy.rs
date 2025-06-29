@@ -805,3 +805,88 @@ impl ModerationProvider for DummyProvider {
         Ok(response)
     }
 }
+
+impl crate::audio::AudioTranscriptionProvider for DummyProvider {
+    async fn transcribe(
+        &self,
+        request: &crate::audio::AudioTranscriptionRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::audio::AudioTranscriptionProviderResponse, Error> {
+        let response = crate::audio::AudioTranscriptionProviderResponse {
+            id: request.id,
+            text: "This is a dummy transcription".to_string(),
+            language: Some("en".to_string()),
+            duration: Some(5.0),
+            words: None,
+            segments: None,
+            created: current_timestamp(),
+            raw_request: "dummy transcription request".to_string(),
+            raw_response: "dummy transcription response".to_string(),
+            usage: Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(100),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::audio::AudioTranslationProvider for DummyProvider {
+    async fn translate(
+        &self,
+        request: &crate::audio::AudioTranslationRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::audio::AudioTranslationProviderResponse, Error> {
+        let response = crate::audio::AudioTranslationProviderResponse {
+            id: request.id,
+            text: "This is a dummy translation".to_string(),
+            created: current_timestamp(),
+            raw_request: "dummy translation request".to_string(),
+            raw_response: "dummy translation response".to_string(),
+            usage: Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(100),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::audio::TextToSpeechProvider for DummyProvider {
+    async fn generate_speech(
+        &self,
+        request: &crate::audio::TextToSpeechRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::audio::TextToSpeechProviderResponse, Error> {
+        // Generate dummy audio data - just a small byte array
+        let dummy_audio = vec![0u8; 1024]; // 1KB of dummy audio data
+
+        let response = crate::audio::TextToSpeechProviderResponse {
+            id: request.id,
+            audio_data: dummy_audio,
+            format: request
+                .response_format
+                .clone()
+                .unwrap_or(crate::audio::AudioOutputFormat::Mp3),
+            created: current_timestamp(),
+            raw_request: "dummy tts request".to_string(),
+            usage: Usage {
+                input_tokens: request.input.len() as u32,
+                output_tokens: 0,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(100),
+            },
+        };
+        Ok(response)
+    }
+}

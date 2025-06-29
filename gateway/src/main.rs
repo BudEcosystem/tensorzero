@@ -223,6 +223,18 @@ async fn main() {
         .route(
             "/v1/moderations",
             post(endpoints::openai_compatible::moderation_handler),
+        )
+        .route(
+            "/v1/audio/transcriptions",
+            post(endpoints::openai_compatible::audio_transcription_handler),
+        )
+        .route(
+            "/v1/audio/translations",
+            post(endpoints::openai_compatible::audio_translation_handler),
+        )
+        .route(
+            "/v1/audio/speech",
+            post(endpoints::openai_compatible::text_to_speech_handler),
         );
 
     // Apply authentication middleware only if authentication is enabled

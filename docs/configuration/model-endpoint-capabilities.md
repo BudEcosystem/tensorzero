@@ -10,11 +10,14 @@ Currently supported endpoint capabilities:
 
 - `chat` - For chat completion/text generation endpoints
 - `embedding` - For text embedding generation endpoints
+- `moderation` - For content moderation endpoints
+- `audio_transcription` - For speech-to-text endpoints
+- `audio_translation` - For audio translation to English endpoints
+- `text_to_speech` - For text-to-speech generation endpoints
 
 Future capabilities may include:
 - `completions` - For text completion endpoints
 - `images` - For image generation endpoints
-- `audio` - For audio processing endpoints
 
 ## Configuration
 
@@ -49,6 +52,33 @@ endpoints = ["chat", "embedding"]
 [models.voyage-3.providers.voyage]
 type = "voyage"
 model_name = "voyage-3"
+
+# Audio transcription/translation model
+[models.whisper-1]
+routing = ["openai"]
+endpoints = ["audio_transcription", "audio_translation"]
+
+[models.whisper-1.providers.openai]
+type = "openai"
+model_name = "whisper-1"
+
+# Text-to-speech model
+[models.tts-1]
+routing = ["openai"]
+endpoints = ["text_to_speech"]
+
+[models.tts-1.providers.openai]
+type = "openai"
+model_name = "tts-1"
+
+# Moderation model
+[models.omni-moderation-latest]
+routing = ["openai"]
+endpoints = ["moderation"]
+
+[models.omni-moderation-latest.providers.openai]
+type = "openai"
+model_name = "omni-moderation-latest"
 ```
 
 ### Default Behavior
@@ -162,6 +192,18 @@ This might occur when:
    ```
    **Solution**: Use a model with embedding capabilities for the `embedding_model` field.
 
+3. **Audio transcription capability error**
+   ```
+   Error: Config { message: "Model 'gpt-4' not found or does not support audio transcription" }
+   ```
+   **Solution**: Use a model with `endpoints = ["audio_transcription"]` like `whisper-1` or `gpt-4o-transcribe`.
+
+4. **Text-to-speech capability error**
+   ```
+   Error: Config { message: "Model 'whisper-1' not found or does not support text-to-speech" }
+   ```
+   **Solution**: Use a TTS model with `endpoints = ["text_to_speech"]` like `tts-1` or `tts-1-hd`.
+
 ## Best Practices
 
 1. **Explicit Declaration**: Always explicitly declare endpoints for clarity:
@@ -186,14 +228,14 @@ This might occur when:
 
 Different providers support different endpoint capabilities:
 
-| Provider | Chat | Embeddings | Notes |
-|----------|------|------------|-------|
-| OpenAI | ✅ | ✅ | Separate models for each capability |
-| Anthropic | ✅ | ❌ | Chat only |
-| Azure | ✅ | ✅ | Via OpenAI models |
-| AWS Bedrock | ✅ | ✅ | Depends on model |
-| vLLM | ✅ | ✅ | Depends on loaded model |
-| Voyage | ❌ | ✅ | Embeddings only |
+| Provider | Chat | Embeddings | Moderation | Audio Transcription | Audio Translation | Text-to-Speech | Notes |
+|----------|------|------------|------------|-------------------|------------------|----------------|-------|
+| OpenAI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Separate models for each capability |
+| Anthropic | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | Chat only |
+| Azure | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Via OpenAI models |
+| AWS Bedrock | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | Depends on model |
+| vLLM | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | Depends on loaded model |
+| Voyage | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | Embeddings only |
 
 ## API Integration
 
@@ -207,6 +249,15 @@ let embedding_models = model_table.get_models_for_capability(EndpointCapability:
 
 // Get a specific model if it supports embeddings
 let model = model_table.get_with_capability("text-embedding-3-small", EndpointCapability::Embedding).await?;
+
+// Get models for audio transcription
+let transcription_models = model_table.get_models_for_capability(EndpointCapability::AudioTranscription);
+
+// Get a specific model for text-to-speech
+let tts_model = model_table.get_with_capability("tts-1", EndpointCapability::TextToSpeech).await?;
+
+// Get models for moderation
+let moderation_models = model_table.get_models_for_capability(EndpointCapability::Moderation);
 ```
 
 ### Type Safety
@@ -313,4 +364,52 @@ endpoints = ["embedding"]
 [models.voyage-3.providers.voyage]
 type = "voyage"
 model_name = "voyage-3"
+```
+
+### Audio Processing Application
+
+```toml
+# Speech-to-text model
+[models.whisper-1]
+routing = ["openai"]
+endpoints = ["audio_transcription", "audio_translation"]
+
+[models.whisper-1.providers.openai]
+type = "openai"
+model_name = "whisper-1"
+
+# Alternative transcription model with GPT-4 Omni
+[models.gpt-4o-transcribe]
+routing = ["openai"]
+endpoints = ["audio_transcription", "audio_translation"]
+
+[models.gpt-4o-transcribe.providers.openai]
+type = "openai"
+model_name = "gpt-4o-audio-preview-2024-12-17"
+
+# Text-to-speech models
+[models.tts-1]
+routing = ["openai"]
+endpoints = ["text_to_speech"]
+
+[models.tts-1.providers.openai]
+type = "openai"
+model_name = "tts-1"
+
+[models.tts-1-hd]
+routing = ["openai"]
+endpoints = ["text_to_speech"]
+
+[models.tts-1-hd.providers.openai]
+type = "openai"
+model_name = "tts-1-hd"
+
+# Chat model for processing transcriptions
+[models.gpt-4]
+routing = ["openai"]
+endpoints = ["chat"]
+
+[models.gpt-4.providers.openai]
+type = "openai"
+model_name = "gpt-4"
 ```

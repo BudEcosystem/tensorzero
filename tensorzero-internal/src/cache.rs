@@ -85,11 +85,6 @@ impl<T> Clone for BaseModelProviderRequest<'_, T> {
 
 pub type ModelProviderRequest<'a> = BaseModelProviderRequest<'a, ModelInferenceRequest<'a>>;
 pub type EmbeddingModelProviderRequest<'a> = BaseModelProviderRequest<'a, EmbeddingRequest>;
-// Note: ModerationModelProviderRequest has been deprecated as moderation is now handled
-// through the unified model system. The OpenAI-compatible endpoint handles moderation
-// without caching.
-pub type ModerationModelProviderRequest<'a> =
-    BaseModelProviderRequest<'a, crate::moderation::ModerationRequest>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CacheKey([u8; 32]);
@@ -120,32 +115,6 @@ impl EmbeddingModelProviderRequest<'_> {
     // if we add any new fields
     pub fn get_cache_key(&self) -> Result<CacheKey, Error> {
         let EmbeddingModelProviderRequest {
-            model_name,
-            provider_name,
-            request,
-        } = self;
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(model_name.as_bytes());
-        hasher.update(&[0]); // null byte after model name to ensure data is prefix-free
-        hasher.update(provider_name.as_bytes());
-        hasher.update(&[0]); // null byte after provider name to ensure data is prefix-free
-
-        // Convert the request to a JSON Value, error if serialization fails
-        let request_json = serde_json::to_string(request).map_err(|e| {
-            Error::new(ErrorDetails::Serialization {
-                message: format!("Failed to serialize request: {e}"),
-            })
-        })?;
-        hasher.update(request_json.as_bytes());
-        Ok(hasher.finalize().into())
-    }
-}
-
-impl ModerationModelProviderRequest<'_> {
-    // Destructure ModerationModelProviderRequest so that we get a compiler error
-    // if we add any new fields
-    pub fn get_cache_key(&self) -> Result<CacheKey, Error> {
-        let ModerationModelProviderRequest {
             model_name,
             provider_name,
             request,
@@ -244,18 +213,10 @@ pub trait CacheOutput {}
 impl CacheOutput for StreamingCacheData {}
 impl CacheOutput for NonStreamingCacheData {}
 impl CacheOutput for EmbeddingCacheData {}
-impl CacheOutput for ModerationCacheData {}
 
 #[derive(Debug)]
 pub struct EmbeddingCacheData {
     pub embeddings: Vec<Vec<f32>>,
-}
-
-// Note: ModerationCacheData has been deprecated as moderation is now handled
-// through the unified model system without caching.
-#[derive(Debug)]
-pub struct ModerationCacheData {
-    pub results: Vec<crate::moderation::ModerationResult>,
 }
 
 // Custom serializer to ensure we serialize as JSON string
@@ -310,55 +271,6 @@ impl<'de> Deserialize<'de> for EmbeddingCacheData {
         }
 
         deserializer.deserialize_str(EmbeddingVisitor)
-    }
-}
-
-// Custom serializer to ensure we serialize as JSON string
-impl Serialize for ModerationCacheData {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::Error;
-
-        let json_string = serde_json::to_string(&self.results).map_err(|e| {
-            S::Error::custom(format!("Failed to serialize moderation results: {e}"))
-        })?;
-        serializer.serialize_str(&json_string)
-    }
-}
-
-// Custom deserializer
-impl<'de> Deserialize<'de> for ModerationCacheData {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::{Error, Visitor};
-
-        struct ModerationVisitor;
-
-        impl Visitor<'_> for ModerationVisitor {
-            type Value = ModerationCacheData;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("moderation results as JSON string")
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: Error,
-            {
-                let results: Vec<crate::moderation::ModerationResult> = serde_json::from_str(v)
-                    .map_err(|e| {
-                        E::custom(format!("Failed to deserialize moderation results: {e}"))
-                    })?;
-
-                Ok(ModerationCacheData { results })
-            }
-        }
-
-        deserializer.deserialize_str(ModerationVisitor)
     }
 }
 
