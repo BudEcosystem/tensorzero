@@ -309,13 +309,14 @@ jobs:
           sudo mv vegeta /usr/local/bin/
           vegeta -version
           
-      - name: Build with performance profile
+      - name: Build for performance test
         run: |
-          cargo build --profile performance --bin gateway --bin mock-inference-provider
+          # Use release profile in CI for faster builds
+          cargo build --release --bin gateway --bin mock-inference-provider
           
       - name: Run performance test
         run: |
-          ./ci/performance/run-performance-test.sh
+          CI=true ./ci/performance/run-performance-test.sh
           
       - name: Upload performance results
         uses: actions/upload-artifact@v4

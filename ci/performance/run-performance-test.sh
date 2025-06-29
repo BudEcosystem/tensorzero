@@ -14,6 +14,12 @@ TIMEOUT="${PERF_TEST_TIMEOUT:-2s}"
 WARMUP_REQUESTS="${PERF_TEST_WARMUP:-50}"
 OUTPUT_FILE="${PERF_TEST_OUTPUT:-performance-results.json}"
 
+# Use release profile in CI to avoid long build times
+PROFILE="${PERF_TEST_PROFILE:-performance}"
+if [ "${CI:-false}" = "true" ]; then
+    PROFILE="release"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -42,6 +48,22 @@ cleanup() {
     echo ""
     echo "🧹 Cleaning up..."
     
+    # If we're exiting with an error, show logs
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ Test failed. Showing logs:"
+        if [ -f gateway.log ]; then
+            echo ""
+            echo "Gateway logs:"
+            tail -50 gateway.log
+        fi
+        if [ -f mock-provider.log ]; then
+            echo ""
+            echo "Mock provider logs:"
+            tail -50 mock-provider.log
+        fi
+    fi
+    
     if [ -n "${GATEWAY_PID:-}" ] && check_process "$GATEWAY_PID"; then
         echo "  Stopping gateway (PID: $GATEWAY_PID)"
         kill "$GATEWAY_PID" 2>/dev/null || true
@@ -58,29 +80,37 @@ cleanup() {
 # Set up cleanup on exit
 trap cleanup EXIT
 
-# Step 1: Build everything with performance profile
-echo "📦 Building with performance profile..."
+# Step 1: Build everything with selected profile
+echo "📦 Building with $PROFILE profile..."
 cd "$PROJECT_ROOT"
-cargo build --profile performance --bin gateway --bin mock-inference-provider
+cargo build --profile "$PROFILE" --bin gateway --bin mock-inference-provider
 
 # Step 2: Start mock inference provider
 echo ""
 echo "🎭 Starting mock inference provider..."
-cargo run --profile performance --bin mock-inference-provider > mock-provider.log 2>&1 &
+cargo run --profile "$PROFILE" --bin mock-inference-provider > mock-provider.log 2>&1 &
 MOCK_PID=$!
 
 # Wait for mock provider to be ready
-sleep 2
-if ! check_process "$MOCK_PID"; then
-    echo -e "${RED}❌ Mock provider failed to start${NC}"
-    cat mock-provider.log
-    exit 1
-fi
+echo "⏳ Waiting for mock provider to be ready..."
+for i in {1..30}; do
+    if curl -s -f http://localhost:3030/health >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ Mock provider is ready${NC}"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo -e "${RED}❌ Mock provider failed to become healthy${NC}"
+        echo "Mock provider logs:"
+        cat mock-provider.log
+        exit 1
+    fi
+    sleep 1
+done
 
 # Step 3: Start gateway
 echo "🌉 Starting TensorZero gateway..."
 TENSORZERO_CLICKHOUSE_URL="${TENSORZERO_CLICKHOUSE_URL:-}" \
-cargo run --profile performance --bin gateway -- \
+cargo run --profile "$PROFILE" --bin gateway -- \
     --config-file "$PROJECT_ROOT/tensorzero-internal/tests/load/tensorzero-without-observability.toml" \
     > gateway.log 2>&1 &
 GATEWAY_PID=$!
@@ -108,7 +138,7 @@ echo 'POST http://localhost:3000/inference' | \
 vegeta attack \
     -header="Content-Type: application/json" \
     -header="Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
-    -body="$PROJECT_ROOT/tensorzero-internal/tests/load/simple/body.json" \
+    -body="$SCRIPT_DIR/test-request.json" \
     -duration="${WARMUP_REQUESTS}" \
     -rate=10 \
     -timeout="$TIMEOUT" \
@@ -121,7 +151,7 @@ echo 'POST http://localhost:3000/inference' | \
 vegeta attack \
     -header="Content-Type: application/json" \
     -header="Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
-    -body="$PROJECT_ROOT/tensorzero-internal/tests/load/simple/body.json" \
+    -body="$SCRIPT_DIR/test-request.json" \
     -duration="$DURATION" \
     -rate="$RATE" \
     -timeout="$TIMEOUT" \
