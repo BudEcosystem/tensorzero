@@ -2,6 +2,7 @@
 // traits with async fns for now.
 #![expect(async_fn_in_trait)]
 
+pub mod audio; // audio transcription, translation, and text-to-speech
 pub mod auth;
 pub mod cache;
 pub mod clickhouse;

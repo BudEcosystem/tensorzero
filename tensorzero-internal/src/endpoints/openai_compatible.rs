@@ -46,8 +46,13 @@ use super::inference::{
     InferenceStream,
 };
 use super::model_resolution;
+use crate::audio::{
+    AudioOutputFormat, AudioTranscriptionRequest, AudioTranscriptionResponseFormat,
+    AudioTranslationRequest, AudioVoice, ChunkingStrategy, TextToSpeechRequest, TimestampGranularity,
+};
 use crate::embeddings::EmbeddingRequest;
 use crate::moderation::ModerationProvider;
+use std::sync::Arc;
 
 /// A handler for the OpenAI-compatible inference endpoint
 #[debug_handler(state = AppStateData)]
@@ -1646,6 +1651,868 @@ pub async fn moderation_handler(
     };
 
     Ok(Json(openai_response).into_response())
+}
+
+// Audio transcription types
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAICompatibleAudioTranscriptionParams {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_granularities: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunking_strategy: Option<ChunkingStrategy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(flatten)]
+    pub unknown_fields: HashMap<String, Value>,
+}
+
+// Audio translation types
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAICompatibleAudioTranslationParams {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(flatten)]
+    pub unknown_fields: HashMap<String, Value>,
+}
+
+// Text-to-speech types
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAICompatibleTextToSpeechParams {
+    pub model: String,
+    pub input: String,
+    pub voice: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f32>,
+    #[serde(flatten)]
+    pub unknown_fields: HashMap<String, Value>,
+}
+
+// Audio transcription/translation response types
+#[derive(Clone, Debug, Serialize)]
+pub struct OpenAICompatibleAudioTranscriptionResponse {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<OpenAICompatibleWordTimestamp>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segments: Option<Vec<OpenAICompatibleSegmentTimestamp>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OpenAICompatibleWordTimestamp {
+    pub word: String,
+    pub start: f32,
+    pub end: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OpenAICompatibleSegmentTimestamp {
+    pub id: u64,
+    pub seek: u64,
+    pub start: f32,
+    pub end: f32,
+    pub text: String,
+    pub tokens: Vec<u64>,
+    pub temperature: f32,
+    pub avg_logprob: f32,
+    pub compression_ratio: f32,
+    pub no_speech_prob: f32,
+}
+
+/// A handler for the OpenAI-compatible audio transcription endpoint
+#[debug_handler(state = AppStateData)]
+pub async fn audio_transcription_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    multipart: axum::extract::Multipart,
+) -> Result<Response<Body>, Error> {
+    // Parse multipart form data
+    let (file_data, filename, params) = parse_audio_multipart(multipart).await?;
+
+    if !params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible audio transcription request: {:?}",
+            params.unknown_fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Audio transcription requests must specify a model, not a function"
+                .to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::AudioTranscription,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support audio transcription",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Convert parameters to internal format
+    let response_format = params
+        .response_format
+        .as_deref()
+        .map(|f| match f {
+            "json" => Ok(AudioTranscriptionResponseFormat::Json),
+            "text" => Ok(AudioTranscriptionResponseFormat::Text),
+            "srt" => Ok(AudioTranscriptionResponseFormat::Srt),
+            "verbose_json" => Ok(AudioTranscriptionResponseFormat::VerboseJson),
+            "vtt" => Ok(AudioTranscriptionResponseFormat::Vtt),
+            _ => Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!("Unsupported response format: {f}"),
+            })),
+        })
+        .transpose()?;
+
+    let timestamp_granularities = params
+        .timestamp_granularities
+        .as_ref()
+        .map(|gs| {
+            gs.iter()
+                .map(|g| match g.as_str() {
+                    "word" => Ok(TimestampGranularity::Word),
+                    "segment" => Ok(TimestampGranularity::Segment),
+                    _ => Err(Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Unsupported timestamp granularity: {g}"),
+                    })),
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+
+    // Create transcription request
+    let transcription_request = AudioTranscriptionRequest {
+        id: Uuid::now_v7(),
+        file: file_data,
+        filename,
+        model: Arc::from(model_name.as_str()),
+        language: params.language,
+        prompt: params.prompt,
+        response_format,
+        temperature: params.temperature,
+        timestamp_granularities,
+        chunking_strategy: params.chunking_strategy,
+        include: params.include,
+        stream: params.stream,
+    };
+
+    // Create credentials - empty for now as OpenAI compatible endpoint doesn't support dynamic credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients with no caching for audio
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off,
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // Call the model's audio transcription capability
+    let response = model
+        .transcribe(
+            &transcription_request,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
+
+    // Convert to OpenAI-compatible format based on response format
+    let response_format = transcription_request
+        .response_format
+        .unwrap_or(AudioTranscriptionResponseFormat::Json);
+
+    match response_format {
+        AudioTranscriptionResponseFormat::Text => Response::builder()
+            .header("content-type", "text/plain")
+            .body(Body::from(response.text))
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to build HTTP response: {e}"),
+                    status_code: None,
+                    provider_type: "openai".to_string(),
+                    raw_request: None,
+                    raw_response: None,
+                })
+            }),
+        AudioTranscriptionResponseFormat::Json | AudioTranscriptionResponseFormat::VerboseJson => {
+            let openai_response = OpenAICompatibleAudioTranscriptionResponse {
+                text: response.text,
+                language: response.language,
+                duration: response.duration,
+                words: if matches!(
+                    response_format,
+                    AudioTranscriptionResponseFormat::VerboseJson
+                ) {
+                    response.words.map(|words| {
+                        words
+                            .into_iter()
+                            .map(|w| OpenAICompatibleWordTimestamp {
+                                word: w.word,
+                                start: w.start,
+                                end: w.end,
+                            })
+                            .collect()
+                    })
+                } else {
+                    None
+                },
+                segments: if matches!(
+                    response_format,
+                    AudioTranscriptionResponseFormat::VerboseJson
+                ) {
+                    response.segments.map(|segments| {
+                        segments
+                            .into_iter()
+                            .map(|s| OpenAICompatibleSegmentTimestamp {
+                                id: s.id,
+                                seek: s.seek,
+                                start: s.start,
+                                end: s.end,
+                                text: s.text,
+                                tokens: s.tokens,
+                                temperature: s.temperature,
+                                avg_logprob: s.avg_logprob,
+                                compression_ratio: s.compression_ratio,
+                                no_speech_prob: s.no_speech_prob,
+                            })
+                            .collect()
+                    })
+                } else {
+                    None
+                },
+            };
+            Ok(Json(openai_response).into_response())
+        }
+        AudioTranscriptionResponseFormat::Srt | AudioTranscriptionResponseFormat::Vtt => {
+            // For now, return an error as we need to implement SRT/VTT formatting
+            Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Response format {} not yet implemented",
+                    response_format.as_str()
+                ),
+            }))
+        }
+    }
+}
+
+/// A handler for the OpenAI-compatible audio translation endpoint
+#[debug_handler(state = AppStateData)]
+pub async fn audio_translation_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    multipart: axum::extract::Multipart,
+) -> Result<Response<Body>, Error> {
+    // Parse multipart form data
+    let (file_data, filename, params) = parse_audio_translation_multipart(multipart).await?;
+
+    if !params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible audio translation request: {:?}",
+            params.unknown_fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Audio translation requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::AudioTranslation,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support audio translation",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Convert parameters to internal format
+    let response_format = params
+        .response_format
+        .as_deref()
+        .map(|f| match f {
+            "json" => Ok(AudioTranscriptionResponseFormat::Json),
+            "text" => Ok(AudioTranscriptionResponseFormat::Text),
+            "srt" => Ok(AudioTranscriptionResponseFormat::Srt),
+            "verbose_json" => Ok(AudioTranscriptionResponseFormat::VerboseJson),
+            "vtt" => Ok(AudioTranscriptionResponseFormat::Vtt),
+            _ => Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!("Unsupported response format: {f}"),
+            })),
+        })
+        .transpose()?;
+
+    // Create translation request
+    let translation_request = AudioTranslationRequest {
+        id: Uuid::now_v7(),
+        file: file_data,
+        filename,
+        model: Arc::from(model_name.as_str()),
+        prompt: params.prompt,
+        response_format,
+        temperature: params.temperature,
+    };
+
+    // Create credentials - empty for now as OpenAI compatible endpoint doesn't support dynamic credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients with no caching for audio
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off,
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // Call the model's audio translation capability
+    let response = model
+        .translate(
+            &translation_request,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
+
+    // Convert to OpenAI-compatible format based on response format
+    let response_format = translation_request
+        .response_format
+        .unwrap_or(AudioTranscriptionResponseFormat::Json);
+
+    match response_format {
+        AudioTranscriptionResponseFormat::Text => Response::builder()
+            .header("content-type", "text/plain")
+            .body(Body::from(response.text))
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to build HTTP response: {e}"),
+                    status_code: None,
+                    provider_type: "openai".to_string(),
+                    raw_request: None,
+                    raw_response: None,
+                })
+            }),
+        AudioTranscriptionResponseFormat::Json | AudioTranscriptionResponseFormat::VerboseJson => {
+            let openai_response = OpenAICompatibleAudioTranscriptionResponse {
+                text: response.text,
+                language: Some("en".to_string()), // Translation always outputs English
+                duration: None,
+                words: None,
+                segments: None,
+            };
+            Ok(Json(openai_response).into_response())
+        }
+        AudioTranscriptionResponseFormat::Srt | AudioTranscriptionResponseFormat::Vtt => {
+            // For now, return an error as we need to implement SRT/VTT formatting
+            Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Response format {} not yet implemented",
+                    response_format.as_str()
+                ),
+            }))
+        }
+    }
+}
+
+/// A handler for the OpenAI-compatible text-to-speech endpoint
+#[debug_handler(state = AppStateData)]
+pub async fn text_to_speech_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(params): StructuredJson<OpenAICompatibleTextToSpeechParams>,
+) -> Result<Response<Body>, Error> {
+    if !params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible text-to-speech request: {:?}",
+            params.unknown_fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Text-to-speech requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::TextToSpeech,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support text-to-speech",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Convert voice parameter
+    let voice = match params.voice.as_str() {
+        "alloy" => AudioVoice::Alloy,
+        "ash" => AudioVoice::Ash,
+        "ballad" => AudioVoice::Ballad,
+        "coral" => AudioVoice::Coral,
+        "echo" => AudioVoice::Echo,
+        "fable" => AudioVoice::Fable,
+        "onyx" => AudioVoice::Onyx,
+        "nova" => AudioVoice::Nova,
+        "sage" => AudioVoice::Sage,
+        "shimmer" => AudioVoice::Shimmer,
+        "verse" => AudioVoice::Verse,
+        _ => {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!("Unsupported voice: {}", params.voice),
+            }))
+        }
+    };
+
+    // Convert response format
+    let response_format = params
+        .response_format
+        .as_deref()
+        .map(|f| match f {
+            "mp3" => Ok(AudioOutputFormat::Mp3),
+            "opus" => Ok(AudioOutputFormat::Opus),
+            "aac" => Ok(AudioOutputFormat::Aac),
+            "flac" => Ok(AudioOutputFormat::Flac),
+            "wav" => Ok(AudioOutputFormat::Wav),
+            "pcm" => Ok(AudioOutputFormat::Pcm),
+            _ => Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!("Unsupported audio format: {f}"),
+            })),
+        })
+        .transpose()?
+        .unwrap_or(AudioOutputFormat::Mp3);
+
+    // Validate input length
+    if params.input.len() > 4096 {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Text input must be 4,096 characters or less".to_string(),
+        }));
+    }
+
+    // Validate speed parameter
+    if let Some(speed) = params.speed {
+        if !(0.25..=4.0).contains(&speed) {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "Speed must be between 0.25 and 4.0".to_string(),
+            }));
+        }
+    }
+
+    // Create text-to-speech request
+    let tts_request = TextToSpeechRequest {
+        id: Uuid::now_v7(),
+        input: params.input,
+        model: Arc::from(model_name.as_str()),
+        voice,
+        response_format: Some(response_format.clone()),
+        speed: params.speed,
+    };
+
+    // Create credentials - empty for now as OpenAI compatible endpoint doesn't support dynamic credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients with no caching for audio
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off,
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // Call the model's text-to-speech capability
+    let response = model
+        .generate_speech(
+            &tts_request,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
+
+    // Return binary audio response
+    let content_type = match response_format {
+        AudioOutputFormat::Mp3 => "audio/mpeg",
+        AudioOutputFormat::Opus => "audio/opus",
+        AudioOutputFormat::Aac => "audio/aac",
+        AudioOutputFormat::Flac => "audio/flac",
+        AudioOutputFormat::Wav => "audio/wav",
+        AudioOutputFormat::Pcm => "audio/pcm",
+    };
+
+    Response::builder()
+        .header("content-type", content_type)
+        .body(Body::from(response.audio_data))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to build HTTP response: {e}"),
+                status_code: None,
+                provider_type: "openai".to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })
+}
+
+// Helper function to parse multipart form data for audio transcription
+async fn parse_audio_multipart(
+    mut multipart: axum::extract::Multipart,
+) -> Result<(Vec<u8>, String, OpenAICompatibleAudioTranscriptionParams), Error> {
+    let mut file_data = None;
+    let mut filename = None;
+    let mut params = OpenAICompatibleAudioTranscriptionParams {
+        model: String::new(),
+        language: None,
+        prompt: None,
+        response_format: None,
+        temperature: None,
+        timestamp_granularities: None,
+        chunking_strategy: None,
+        include: None,
+        stream: None,
+        unknown_fields: HashMap::new(),
+    };
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to parse multipart field: {e}"),
+        })
+    })? {
+        let name = field.name().unwrap_or("").to_string();
+
+        match name.as_str() {
+            "file" => {
+                filename = Some(field.file_name().unwrap_or("audio").to_string());
+                file_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InvalidRequest {
+                                message: format!("Failed to read file data: {e}"),
+                            })
+                        })?
+                        .to_vec(),
+                );
+            }
+            "model" => {
+                params.model = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read model field: {e}"),
+                    })
+                })?;
+            }
+            "language" => {
+                params.language = Some(field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read language field: {e}"),
+                    })
+                })?);
+            }
+            "prompt" => {
+                params.prompt = Some(field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read prompt field: {e}"),
+                    })
+                })?);
+            }
+            "response_format" => {
+                params.response_format = Some(field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read response_format field: {e}"),
+                    })
+                })?);
+            }
+            "temperature" => {
+                let temp_str = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read temperature field: {e}"),
+                    })
+                })?;
+                params.temperature = Some(temp_str.parse().map_err(|_| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: "Invalid temperature value".to_string(),
+                    })
+                })?);
+            }
+            "timestamp_granularities[]" => {
+                let granularity = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read timestamp_granularities field: {e}"),
+                    })
+                })?;
+                params
+                    .timestamp_granularities
+                    .get_or_insert_with(Vec::new)
+                    .push(granularity);
+            }
+            "chunking_strategy" => {
+                let strategy_str = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read chunking_strategy field: {e}"),
+                    })
+                })?;
+                // Parse JSON string to ChunkingStrategy
+                params.chunking_strategy = Some(serde_json::from_str(&strategy_str).map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Invalid chunking_strategy format: {e}"),
+                    })
+                })?);
+            }
+            "include[]" => {
+                let include_item = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read include field: {e}"),
+                    })
+                })?;
+                params
+                    .include
+                    .get_or_insert_with(Vec::new)
+                    .push(include_item);
+            }
+            "stream" => {
+                let stream_str = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read stream field: {e}"),
+                    })
+                })?;
+                params.stream = Some(stream_str.parse().map_err(|_| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: "Invalid stream value (must be true or false)".to_string(),
+                    })
+                })?);
+            }
+            _ => {
+                params
+                    .unknown_fields
+                    .insert(name, Value::String(field.text().await.unwrap_or_default()));
+            }
+        }
+    }
+
+    let file_data = file_data.ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'file' field".to_string(),
+        })
+    })?;
+
+    let filename = filename.unwrap_or_else(|| "audio".to_string());
+
+    if params.model.is_empty() {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'model' field".to_string(),
+        }));
+    }
+
+    // Validate file size (25MB limit)
+    if file_data.len() > 25 * 1024 * 1024 {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "File size exceeds 25MB limit".to_string(),
+        }));
+    }
+
+    Ok((file_data, filename, params))
+}
+
+// Helper function to parse multipart form data for audio translation
+async fn parse_audio_translation_multipart(
+    mut multipart: axum::extract::Multipart,
+) -> Result<(Vec<u8>, String, OpenAICompatibleAudioTranslationParams), Error> {
+    let mut file_data = None;
+    let mut filename = None;
+    let mut params = OpenAICompatibleAudioTranslationParams {
+        model: String::new(),
+        prompt: None,
+        response_format: None,
+        temperature: None,
+        unknown_fields: HashMap::new(),
+    };
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to parse multipart field: {e}"),
+        })
+    })? {
+        let name = field.name().unwrap_or("").to_string();
+
+        match name.as_str() {
+            "file" => {
+                filename = Some(field.file_name().unwrap_or("audio").to_string());
+                file_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InvalidRequest {
+                                message: format!("Failed to read file data: {e}"),
+                            })
+                        })?
+                        .to_vec(),
+                );
+            }
+            "model" => {
+                params.model = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read model field: {e}"),
+                    })
+                })?;
+            }
+            "prompt" => {
+                params.prompt = Some(field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read prompt field: {e}"),
+                    })
+                })?);
+            }
+            "response_format" => {
+                params.response_format = Some(field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read response_format field: {e}"),
+                    })
+                })?);
+            }
+            "temperature" => {
+                let temp_str = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read temperature field: {e}"),
+                    })
+                })?;
+                params.temperature = Some(temp_str.parse().map_err(|_| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: "Invalid temperature value".to_string(),
+                    })
+                })?);
+            }
+            _ => {
+                params
+                    .unknown_fields
+                    .insert(name, Value::String(field.text().await.unwrap_or_default()));
+            }
+        }
+    }
+
+    let file_data = file_data.ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'file' field".to_string(),
+        })
+    })?;
+
+    let filename = filename.unwrap_or_else(|| "audio".to_string());
+
+    if params.model.is_empty() {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'model' field".to_string(),
+        }));
+    }
+
+    // Validate file size (25MB limit)
+    if file_data.len() > 25 * 1024 * 1024 {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "File size exceeds 25MB limit".to_string(),
+        }));
+    }
+
+    Ok((file_data, filename, params))
 }
 
 #[cfg(test)]

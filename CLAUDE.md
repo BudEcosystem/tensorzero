@@ -166,6 +166,12 @@ The moderation system was recently unified under the model system:
 - Models declare moderation support via `endpoints = ["moderation"]`
 - Simplified configuration and reduced code duplication
 
+Audio endpoints have been added following the same unified model pattern:
+- Audio capabilities: `audio_transcription`, `audio_translation`, `text_to_speech`
+- Multipart form data handling for file uploads using `axum::extract::Multipart`
+- Binary response handling for TTS endpoints
+- No caching for audio endpoints (similar to moderation)
+
 ## Key Principles
 
 1. **Type Safety**: Use Rust's type system to prevent errors at compile time
@@ -196,3 +202,80 @@ The moderation system was recently unified under the model system:
 - Use `Arc` for shared immutable data
 - Stream responses when possible
 - Cache expensive computations
+
+## Audio Implementation Details
+
+### Audio Endpoints Overview
+
+TensorZero implements three OpenAI-compatible audio endpoints:
+- `/v1/audio/transcriptions` - Convert audio to text (speech-to-text)
+- `/v1/audio/translations` - Convert audio to English text
+- `/v1/audio/speech` - Generate audio from text (text-to-speech)
+
+### Key Implementation Patterns
+
+1. **Multipart Form Data**: Transcription/translation endpoints use `axum::extract::Multipart` for file uploads
+2. **Binary Responses**: TTS endpoint returns raw audio bytes with appropriate content-type headers
+3. **File Validation**: 25MB size limit, supported audio format validation
+4. **Response Formats**: Support for json, text, srt, verbose_json, vtt (though srt/vtt not yet implemented)
+
+### Audio-Specific Types
+
+Located in `tensorzero-internal/src/audio.rs`:
+- Request types: `AudioTranscriptionRequest`, `AudioTranslationRequest`, `TextToSpeechRequest`
+- Response types: `AudioTranscriptionResponse`, `AudioTranslationResponse`, `TextToSpeechResponse`
+- Provider traits: `AudioTranscriptionProvider`, `AudioTranslationProvider`, `TextToSpeechProvider`
+- Enums: `AudioTranscriptionResponseFormat`, `AudioVoice`, `AudioOutputFormat`, `TimestampGranularity`
+
+### Model Configuration for Audio
+
+```toml
+# Speech-to-text model
+[models."whisper-1"]
+routing = ["openai"]
+endpoints = ["audio_transcription", "audio_translation"]
+
+[models."whisper-1".providers.openai]
+type = "openai"
+model_name = "whisper-1"
+
+# Text-to-speech model
+[models."tts-1"]
+routing = ["openai"]
+endpoints = ["text_to_speech"]
+
+[models."tts-1".providers.openai]
+type = "openai"
+model_name = "tts-1"
+```
+
+### Provider Implementation
+
+The OpenAI provider implements all three audio traits in `inference/providers/openai.rs`:
+- Uses multipart form requests for transcription/translation
+- Handles JSON and text response formats
+- Returns binary audio data for TTS
+- Proper error handling for audio-specific failures
+
+### Testing Audio Endpoints
+
+1. **Unit Tests**: Test request/response type conversions
+2. **Integration Tests**: Test with mock audio files and responses
+3. **E2E Tests**: Full cycle with actual file uploads/downloads
+4. **Manual Testing**: Use curl or API clients with real audio files
+
+Example test command:
+```bash
+curl -X POST http://localhost:3000/v1/audio/transcriptions \
+  -H "Authorization: Bearer test-key" \
+  -F "file=@test.mp3" \
+  -F "model=whisper-1"
+```
+
+### Future Enhancements
+
+- Streaming support for real-time transcription
+- SRT/VTT subtitle format generation
+- Additional audio format support
+- WebSocket support for bidirectional audio streaming
+- Audio file validation beyond size checks

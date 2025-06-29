@@ -151,6 +151,157 @@ impl ModelConfig {
         }
         Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
     }
+
+    /// Audio transcription method (when model supports audio transcription capability)
+    #[instrument(skip_all)]
+    pub async fn transcribe(
+        &self,
+        request: &crate::audio::AudioTranscriptionRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::audio::AudioTranscriptionResponse, Error> {
+        // Verify this model supports audio transcription
+        if !self.supports_endpoint(EndpointCapability::AudioTranscription) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::AudioTranscription.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .transcribe(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    // TODO: Add caching support here
+                    let transcription_response = crate::audio::AudioTranscriptionResponse {
+                        id: response.id,
+                        text: response.text,
+                        language: response.language,
+                        duration: response.duration,
+                        words: response.words,
+                        segments: response.segments,
+                        created: response.created,
+                        raw_request: response.raw_request,
+                        raw_response: response.raw_response,
+                        usage: response.usage,
+                        latency: response.latency,
+                    };
+                    return Ok(transcription_response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Audio translation method (when model supports audio translation capability)
+    #[instrument(skip_all)]
+    pub async fn translate(
+        &self,
+        request: &crate::audio::AudioTranslationRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::audio::AudioTranslationResponse, Error> {
+        // Verify this model supports audio translation
+        if !self.supports_endpoint(EndpointCapability::AudioTranslation) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::AudioTranslation.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .translate(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    // TODO: Add caching support here
+                    let translation_response = crate::audio::AudioTranslationResponse {
+                        id: response.id,
+                        text: response.text,
+                        created: response.created,
+                        raw_request: response.raw_request,
+                        raw_response: response.raw_response,
+                        usage: response.usage,
+                        latency: response.latency,
+                    };
+                    return Ok(translation_response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Text-to-speech method (when model supports text-to-speech capability)
+    #[instrument(skip_all)]
+    pub async fn generate_speech(
+        &self,
+        request: &crate::audio::TextToSpeechRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::audio::TextToSpeechResponse, Error> {
+        // Verify this model supports text-to-speech
+        if !self.supports_endpoint(EndpointCapability::TextToSpeech) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::TextToSpeech.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .generate_speech(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    // TODO: Add caching support here
+                    let tts_response = crate::audio::TextToSpeechResponse {
+                        id: response.id,
+                        audio_data: response.audio_data,
+                        format: response.format,
+                        created: response.created,
+                        raw_request: response.raw_request,
+                        usage: response.usage,
+                        latency: response.latency,
+                    };
+                    return Ok(tts_response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
 }
 
 impl UninitializedModelConfig {
@@ -1382,6 +1533,88 @@ impl ModelProvider {
             // Other providers don't support embeddings yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::Embedding.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Audio transcription method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_audio_transcription"))]
+    pub async fn transcribe(
+        &self,
+        request: &crate::audio::AudioTranscriptionRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::audio::AudioTranscriptionProviderResponse, Error> {
+        use crate::audio::AudioTranscriptionProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider.transcribe(request, client, dynamic_api_keys).await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider.transcribe(request, client, dynamic_api_keys).await
+            }
+            // Other providers don't support audio transcription yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::AudioTranscription.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Audio translation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_audio_translation"))]
+    pub async fn translate(
+        &self,
+        request: &crate::audio::AudioTranslationRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::audio::AudioTranslationProviderResponse, Error> {
+        use crate::audio::AudioTranslationProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider.translate(request, client, dynamic_api_keys).await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider.translate(request, client, dynamic_api_keys).await
+            }
+            // Other providers don't support audio translation yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::AudioTranslation.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Text-to-speech method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_text_to_speech"))]
+    pub async fn generate_speech(
+        &self,
+        request: &crate::audio::TextToSpeechRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::audio::TextToSpeechProviderResponse, Error> {
+        use crate::audio::TextToSpeechProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .generate_speech(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .generate_speech(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support text-to-speech yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::TextToSpeech.as_str().to_string(),
                 provider: self.name.to_string(),
             })),
         }

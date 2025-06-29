@@ -17,6 +17,13 @@ use tracing::instrument;
 use url::Url;
 use uuid::Uuid;
 
+use crate::audio::{
+    AudioOutputFormat, AudioTranscriptionProvider, AudioTranscriptionProviderResponse,
+    AudioTranscriptionRequest, AudioTranscriptionResponseFormat, AudioTranslationProvider,
+    AudioTranslationProviderResponse, AudioTranslationRequest, AudioVoice, SegmentTimestamp,
+    TextToSpeechProvider, TextToSpeechProviderResponse, TextToSpeechRequest, TimestampGranularity,
+    WordTimestamp,
+};
 use crate::cache::ModelProviderRequest;
 use crate::embeddings::{EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest};
 use crate::endpoints::inference::InferenceCredentials;
@@ -871,6 +878,510 @@ impl ModerationProvider for OpenAIProvider {
     }
 }
 
+impl AudioTranscriptionProvider for OpenAIProvider {
+    async fn transcribe(
+        &self,
+        request: &AudioTranscriptionRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<AudioTranscriptionProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_audio_transcription_url(
+            self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL),
+        )?;
+
+        let start_time = Instant::now();
+
+        // Create multipart form
+        let mut form = Form::new().text("model", self.model_name.clone()).part(
+            "file",
+            Part::bytes(request.file.clone())
+                .file_name(request.filename.clone())
+                .mime_str("audio/mpeg")
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        status_code: None,
+                        message: format!("Failed to set MIME type: {e}"),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: None,
+                        raw_response: None,
+                    })
+                })?,
+        );
+
+        if let Some(language) = &request.language {
+            form = form.text("language", language.clone());
+        }
+        if let Some(prompt) = &request.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(temperature) = request.temperature {
+            form = form.text("temperature", temperature.to_string());
+        }
+        if let Some(granularities) = &request.timestamp_granularities {
+            for g in granularities {
+                form = form.text(
+                    "timestamp_granularities[]",
+                    match g {
+                        TimestampGranularity::Word => "word",
+                        TimestampGranularity::Segment => "segment",
+                    },
+                );
+            }
+        }
+
+        let mut request_builder = client.post(url);
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.multipart(form).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending audio transcription request to OpenAI: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(format!("Audio file: {}", request.filename)),
+                raw_response: None,
+            })
+        })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            // Parse response based on format
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            // For text format, the response is just the text
+            if matches!(
+                request.response_format,
+                Some(AudioTranscriptionResponseFormat::Text)
+            ) {
+                return Ok(AudioTranscriptionProviderResponse {
+                    id: request.id,
+                    text: raw_response.clone(),
+                    language: None,
+                    duration: None,
+                    words: None,
+                    segments: None,
+                    created: crate::inference::types::current_timestamp(),
+                    raw_request: format!("Audio file: {}", request.filename),
+                    raw_response,
+                    usage: Usage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                    latency,
+                });
+            }
+
+            // For JSON formats, parse the response
+            #[derive(Deserialize)]
+            struct OpenAITranscriptionResponse {
+                text: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                language: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                duration: Option<f32>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                words: Option<Vec<OpenAIWordTimestamp>>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                segments: Option<Vec<OpenAISegmentTimestamp>>,
+            }
+
+            #[derive(Deserialize)]
+            struct OpenAIWordTimestamp {
+                word: String,
+                start: f32,
+                end: f32,
+            }
+
+            #[derive(Deserialize)]
+            struct OpenAISegmentTimestamp {
+                id: u64,
+                seek: u64,
+                start: f32,
+                end: f32,
+                text: String,
+                tokens: Vec<u64>,
+                temperature: f32,
+                avg_logprob: f32,
+                compression_ratio: f32,
+                no_speech_prob: f32,
+            }
+
+            let response: OpenAITranscriptionResponse = serde_json::from_str(&raw_response)
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(format!("Audio file: {}", request.filename)),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(AudioTranscriptionProviderResponse {
+                id: request.id,
+                text: response.text,
+                language: response.language,
+                duration: response.duration,
+                words: response.words.map(|words| {
+                    words
+                        .into_iter()
+                        .map(|w| WordTimestamp {
+                            word: w.word,
+                            start: w.start,
+                            end: w.end,
+                        })
+                        .collect()
+                }),
+                segments: response.segments.map(|segments| {
+                    segments
+                        .into_iter()
+                        .map(|s| SegmentTimestamp {
+                            id: s.id,
+                            seek: s.seek,
+                            start: s.start,
+                            end: s.end,
+                            text: s.text,
+                            tokens: s.tokens,
+                            temperature: s.temperature,
+                            avg_logprob: s.avg_logprob,
+                            compression_ratio: s.compression_ratio,
+                            no_speech_prob: s.no_speech_prob,
+                        })
+                        .collect()
+                }),
+                created: crate::inference::types::current_timestamp(),
+                raw_request: format!("Audio file: {}", request.filename),
+                raw_response,
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                &format!("Audio file: {}", request.filename),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(format!("Audio file: {}", request.filename)),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+impl AudioTranslationProvider for OpenAIProvider {
+    async fn translate(
+        &self,
+        request: &AudioTranslationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<AudioTranslationProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url =
+            get_audio_translation_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+
+        let start_time = Instant::now();
+
+        // Create multipart form
+        let mut form = Form::new().text("model", self.model_name.clone()).part(
+            "file",
+            Part::bytes(request.file.clone())
+                .file_name(request.filename.clone())
+                .mime_str("audio/mpeg")
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        status_code: None,
+                        message: format!("Failed to set MIME type: {e}"),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: None,
+                        raw_response: None,
+                    })
+                })?,
+        );
+
+        if let Some(prompt) = &request.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(temperature) = request.temperature {
+            form = form.text("temperature", temperature.to_string());
+        }
+
+        let mut request_builder = client.post(url);
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.multipart(form).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending audio translation request to OpenAI: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(format!("Audio file: {}", request.filename)),
+                raw_response: None,
+            })
+        })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            // For text format, the response is just the text
+            if matches!(
+                request.response_format,
+                Some(AudioTranscriptionResponseFormat::Text)
+            ) {
+                return Ok(AudioTranslationProviderResponse {
+                    id: request.id,
+                    text: raw_response.clone(),
+                    created: crate::inference::types::current_timestamp(),
+                    raw_request: format!("Audio file: {}", request.filename),
+                    raw_response,
+                    usage: Usage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                    latency,
+                });
+            }
+
+            // For JSON formats, parse the response
+            #[derive(Deserialize)]
+            struct OpenAITranslationResponse {
+                text: String,
+            }
+
+            let response: OpenAITranslationResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(format!("Audio file: {}", request.filename)),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(AudioTranslationProviderResponse {
+                id: request.id,
+                text: response.text,
+                created: crate::inference::types::current_timestamp(),
+                raw_request: format!("Audio file: {}", request.filename),
+                raw_response,
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                &format!("Audio file: {}", request.filename),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(format!("Audio file: {}", request.filename)),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+impl TextToSpeechProvider for OpenAIProvider {
+    async fn generate_speech(
+        &self,
+        request: &TextToSpeechRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<TextToSpeechProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url =
+            get_text_to_speech_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+
+        let start_time = Instant::now();
+
+        #[derive(Serialize)]
+        struct OpenAITextToSpeechRequest {
+            model: String,
+            input: String,
+            voice: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            response_format: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            speed: Option<f32>,
+        }
+
+        let voice_str = match request.voice {
+            AudioVoice::Alloy => "alloy",
+            AudioVoice::Ash => "ash",
+            AudioVoice::Ballad => "ballad",
+            AudioVoice::Coral => "coral",
+            AudioVoice::Echo => "echo",
+            AudioVoice::Fable => "fable",
+            AudioVoice::Onyx => "onyx",
+            AudioVoice::Nova => "nova",
+            AudioVoice::Sage => "sage",
+            AudioVoice::Shimmer => "shimmer",
+            AudioVoice::Verse => "verse",
+        };
+
+        let format_str = request.response_format.as_ref().map(|f| match f {
+            AudioOutputFormat::Mp3 => "mp3",
+            AudioOutputFormat::Opus => "opus",
+            AudioOutputFormat::Aac => "aac",
+            AudioOutputFormat::Flac => "flac",
+            AudioOutputFormat::Wav => "wav",
+            AudioOutputFormat::Pcm => "pcm",
+        });
+
+        let request_body = OpenAITextToSpeechRequest {
+            model: self.model_name.clone(),
+            input: request.input.clone(),
+            voice: voice_str.to_string(),
+            response_format: format_str.map(|s| s.to_string()),
+            speed: request.speed,
+        };
+
+        let mut request_builder = client.post(url).header("Content-Type", "application/json");
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending TTS request to OpenAI: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+
+        if res.status().is_success() {
+            let audio_data = res
+                .bytes()
+                .await
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error reading audio response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?
+                .to_vec();
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            Ok(TextToSpeechProviderResponse {
+                id: request.id,
+                audio_data,
+                format: request
+                    .response_format
+                    .clone()
+                    .unwrap_or(AudioOutputFormat::Mp3),
+                created: crate::inference::types::current_timestamp(),
+                raw_request: serde_json::to_string(&request_body).unwrap_or_default(),
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                &serde_json::to_string(&request_body).unwrap_or_default(),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
 pub async fn convert_stream_error(provider_type: String, e: reqwest_eventsource::Error) -> Error {
     let message = e.to_string();
     let mut raw_response = None;
@@ -1058,6 +1569,42 @@ fn get_moderation_url(base_url: &Url) -> Result<Url, Error> {
         url.set_path(&format!("{}/", url.path()));
     }
     url.join("moderations").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
+fn get_audio_transcription_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("audio/transcriptions").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
+fn get_audio_translation_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("audio/translations").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
+fn get_text_to_speech_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("audio/speech").map_err(|e| {
         Error::new(ErrorDetails::InvalidBaseUrl {
             message: e.to_string(),
         })
