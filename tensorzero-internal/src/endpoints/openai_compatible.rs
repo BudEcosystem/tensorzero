@@ -47,6 +47,7 @@ use super::inference::{
 };
 use super::model_resolution;
 use crate::embeddings::EmbeddingRequest;
+use crate::moderation::ModerationProvider;
 
 /// A handler for the OpenAI-compatible inference endpoint
 #[debug_handler(state = AppStateData)]
@@ -1455,6 +1456,193 @@ pub async fn embedding_handler(
             prompt_tokens: response.usage.input_tokens,
             total_tokens: response.usage.input_tokens,
         },
+    };
+
+    Ok(Json(openai_response).into_response())
+}
+
+/// OpenAI-compatible moderation request structure
+#[derive(Clone, Debug, Deserialize)]
+pub struct OpenAICompatibleModerationParams {
+    pub input: OpenAICompatibleModerationInput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(flatten)]
+    pub unknown_fields: HashMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum OpenAICompatibleModerationInput {
+    Single(String),
+    Batch(Vec<String>),
+}
+
+/// OpenAI-compatible moderation response structure
+#[derive(Clone, Debug, Serialize)]
+pub struct OpenAICompatibleModerationResponse {
+    pub id: String,
+    pub model: String,
+    pub results: Vec<crate::moderation::ModerationResult>,
+}
+
+/// A handler for the OpenAI-compatible moderation endpoint
+#[debug_handler(state = AppStateData)]
+pub async fn moderation_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(openai_compatible_params): StructuredJson<OpenAICompatibleModerationParams>,
+) -> Result<Response<Body>, Error> {
+    let unknown_fields: Vec<&str> = openai_compatible_params
+        .unknown_fields
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+
+    if !unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible moderation request: {:?}",
+            unknown_fields
+        );
+    }
+
+    // Default to omni-moderation-latest if no model specified
+    let model_name = openai_compatible_params
+        .model
+        .clone()
+        .unwrap_or_else(|| "omni-moderation-latest".to_string());
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(&model_name, &headers, false)?;
+
+    let resolved_model_name = model_resolution
+        .model_name
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+                message: "Moderation requests must specify a model, not a function".to_string(),
+            })
+        })?
+        .to_string();
+
+    // Convert OpenAI request to internal format
+    let internal_input = match &openai_compatible_params.input {
+        OpenAICompatibleModerationInput::Single(text) => {
+            crate::moderation::ModerationInput::Single(text.clone())
+        }
+        OpenAICompatibleModerationInput::Batch(texts) => {
+            if texts.is_empty() {
+                return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+                    message: "Batch moderation requests cannot be empty.".to_string(),
+                }));
+            }
+            crate::moderation::ModerationInput::Batch(texts.clone())
+        }
+    };
+
+    let moderation_request = crate::moderation::ModerationRequest {
+        input: internal_input,
+        model: None, // Let the provider set the appropriate model name
+    };
+
+    // Get the regular model table
+    let models = config.models.read().await;
+
+    // Check if the model exists and has moderation capability
+    let model_config = models.get(&resolved_model_name).await?.ok_or_else(|| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Model '{resolved_model_name}' not found"),
+        })
+    })?;
+
+    // Verify the model supports moderation
+    if !model_config
+        .endpoints
+        .contains(&crate::endpoints::capability::EndpointCapability::Moderation)
+    {
+        return Err(Error::new(ErrorDetails::Config {
+            message: format!("Model '{resolved_model_name}' does not support moderation"),
+        }));
+    }
+
+    // Create credentials - empty for now as OpenAI compatible endpoint doesn't support dynamic credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients with no caching for moderation
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off,
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // For now, we'll use the first provider in routing that supports moderation
+    // This is a temporary solution until we fully integrate moderation into the regular model system
+    let mut provider_errors = HashMap::new();
+    let mut response = None;
+
+    for provider_name in &model_config.routing {
+        let provider = match model_config.providers.get(provider_name) {
+            Some(p) => &p.config,
+            None => {
+                tracing::warn!("Provider {} not found in model config", provider_name);
+                continue;
+            }
+        };
+
+        // Check if this provider supports moderation
+        tracing::info!("Checking provider {} for moderation support", provider_name);
+        match provider {
+            crate::model::ProviderConfig::OpenAI(openai_provider) => {
+                tracing::info!("Found OpenAI provider for moderation");
+                // For OpenAI, we need to use the provider's configured model name
+                let mut provider_request = moderation_request.clone();
+                provider_request.model = Some(openai_provider.model_name().to_string());
+                // Use the OpenAI provider's moderation capability
+                match openai_provider
+                    .moderate(&provider_request, clients.http_client, &credentials)
+                    .await
+                {
+                    Ok(provider_response) => {
+                        response = Some(crate::moderation::ModerationResponse::new(
+                            provider_response,
+                            provider_name.clone(),
+                        ));
+                        break;
+                    }
+                    Err(e) => {
+                        provider_errors.insert(provider_name.to_string(), e);
+                        continue;
+                    }
+                }
+            }
+            _ => {
+                // Other providers don't support moderation yet
+                continue;
+            }
+        }
+    }
+
+    let response = response.ok_or_else(|| {
+        Error::new(ErrorDetails::Config {
+            message: format!("No providers available for moderation model '{resolved_model_name}'"),
+        })
+    })?;
+
+    // Convert to OpenAI-compatible format
+    let openai_response = OpenAICompatibleModerationResponse {
+        id: format!("modr-{}", Uuid::now_v7()),
+        model: model_resolution.original_model_name.to_string(),
+        results: response.results,
     };
 
     Ok(Json(openai_response).into_response())

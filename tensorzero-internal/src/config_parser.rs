@@ -232,7 +232,11 @@ impl ObjectStoreInfo {
 // improved warning messages.
 // We are attempting to find this error: `https://github.com/seanmonstar/reqwest/blob/c4a9fb060fb518f0053b98f78c7583071a760cf4/src/error.rs#L340`
 fn contains_bad_scheme_err(e: &impl StdError) -> bool {
-    format!("{e:?}").contains("BadScheme")
+    let err_str = format!("{e:?}");
+    // Check for BadScheme error or DNS errors that commonly occur with HTTP endpoints
+    err_str.contains("BadScheme")
+        || (err_str.contains("dns error") && err_str.contains("http://"))
+        || (err_str.contains("Name or service not known") && err_str.contains("http://"))
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
