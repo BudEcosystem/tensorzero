@@ -282,8 +282,8 @@ jobs:
   performance-test:
     # Run performance tests to detect regressions
     runs-on: ubuntu-latest
-    # Continue even if this job fails (for now, while we stabilize the tests)
-    continue-on-error: true
+    # This job is now blocking - PR will fail if P99 latency exceeds 1.5ms
+    continue-on-error: false
     
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -423,7 +423,8 @@ jobs:
         clickhouse-tests-cloud,
         check-docker-compose,
         validate,
-        clickhouse-tests
+        clickhouse-tests,
+        performance-test
       ]
     runs-on: ubuntu-latest
     steps:

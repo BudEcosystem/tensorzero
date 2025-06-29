@@ -106,24 +106,31 @@ def generate_report(baseline_metrics: Dict[str, float], current_metrics: Dict[st
         else:
             report.append(f"| {metric_name} | {baseline:.2f} {unit} | {current:.2f} {unit} | {change_str} |")
     
-    # Regression check (adjusted for high load - 1000 req/s)
+    # Strict regression check - any increase in P99 over 1.5ms fails
     thresholds = {
-        'latency_p99': 20.0,  # Allow 20% increase in P99 latency for high load
-        'latency_p95': 25.0,  # Allow 25% increase in P95 latency for high load
-        'success_rate': 2.0,  # Allow 2% decrease in success rate for high load
+        'latency_p99': 0.0,  # No tolerance - P99 must stay under 1.5ms absolute
+        'latency_p95': 5.0,  # Allow only 5% increase in P95 latency
+        'success_rate': 0.1,  # Allow only 0.1% decrease in success rate
     }
     
     has_regression, regressions = check_regression(baseline_metrics, current_metrics, thresholds)
     
+    # Also check absolute P99 threshold
+    absolute_p99_fail = current_metrics.get('latency_p99', 0) > 1.5
+    
     report.append("\n### Performance Check")
-    if has_regression:
+    if has_regression or absolute_p99_fail:
         report.append("❌ **Performance regression detected!**")
-        report.append("\nThe following metrics exceeded acceptable thresholds:")
-        for regression in regressions:
-            report.append(f"- {regression}")
+        if absolute_p99_fail:
+            report.append(f"\n**CRITICAL**: P99 latency ({current_metrics['latency_p99']:.2f}ms) exceeds absolute threshold of 1.5ms")
+        if has_regression:
+            report.append("\nThe following metrics exceeded acceptable thresholds:")
+            for regression in regressions:
+                report.append(f"- {regression}")
     else:
         report.append("✅ **No performance regression detected**")
         report.append("\nAll metrics are within acceptable thresholds.")
+        report.append(f"\nP99 latency: {current_metrics['latency_p99']:.2f}ms (threshold: 1.5ms)")
     
     # Details section
     report.append("\n<details>")
@@ -178,16 +185,19 @@ def main():
     report = generate_report(baseline_metrics, current_metrics)
     print(report)
     
-    # Check for regression (adjusted for high load - 1000 req/s)
+    # Check for regression with strict thresholds
     thresholds = {
-        'latency_p99': 20.0,
-        'latency_p95': 25.0,
-        'success_rate': 2.0,
+        'latency_p99': 0.0,  # No tolerance - P99 must stay under 1.5ms absolute
+        'latency_p95': 5.0,  # Allow only 5% increase in P95 latency
+        'success_rate': 0.1,  # Allow only 0.1% decrease in success rate
     }
     has_regression, _ = check_regression(baseline_metrics, current_metrics, thresholds)
     
-    # Exit with error if regression detected
-    sys.exit(1 if has_regression else 0)
+    # Also check absolute P99 threshold
+    absolute_p99_fail = current_metrics.get('latency_p99', 0) > 1.5
+    
+    # Exit with error if regression detected or P99 > 1.5ms
+    sys.exit(1 if (has_regression or absolute_p99_fail) else 0)
 
 if __name__ == "__main__":
     main()

@@ -45,12 +45,12 @@ The performance test job in `.github/workflows/pr.yaml`:
 
 ## Thresholds
 
-Default regression thresholds (adjusted for high load - 1000 req/s):
-- **P99 Latency**: +20% maximum increase
-- **P95 Latency**: +25% maximum increase  
-- **Success Rate**: -2% maximum decrease
+Strict performance thresholds:
+- **P99 Latency**: Must be under 1.5ms (absolute threshold, no exceptions)
+- **P95 Latency**: +5% maximum increase from baseline
+- **Success Rate**: 99.9% minimum required
 
-These can be adjusted in `compare-performance.py`.
+These thresholds ensure the gateway maintains ultra-low latency even under high load (1000 req/s).
 
 ## Test Details
 

@@ -8,10 +8,10 @@ Performance tests run automatically on every PR to detect regressions. The CI sy
 2. **Tests the OpenAI-compatible `/v1/chat/completions` endpoint**
 3. **Compares results against baseline** from the main branch
 4. **Posts results as a PR comment** with detailed metrics
-5. **Fails if regressions exceed thresholds**:
-   - P99 latency: +20% maximum increase allowed
-   - P95 latency: +25% maximum increase allowed
-   - Success rate: -2% maximum decrease allowed
+5. **Fails if performance doesn't meet strict thresholds**:
+   - P99 latency: Must be under 1.5ms (absolute threshold)
+   - P95 latency: +5% maximum increase allowed
+   - Success rate: 99.9% minimum required
 
 ### Running Performance Tests Locally
 

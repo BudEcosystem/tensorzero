@@ -231,9 +231,9 @@ if command -v jq >/dev/null 2>&1; then
     echo "🎯 Performance Checks"
     echo "━━━━━━━━━━━━━━━━━━━━"
     
-    # Define thresholds for high load (1000 req/s)
-    P99_THRESHOLD=100.0  # 100ms for 1000 req/s
-    SUCCESS_THRESHOLD=95.0  # 95% for high load
+    # Define strict thresholds - P99 must be under 1.5ms
+    P99_THRESHOLD=1.5  # 1.5ms max for P99 latency
+    SUCCESS_THRESHOLD=99.9  # 99.9% minimum success rate
     
     CHECKS_PASSED=true
     

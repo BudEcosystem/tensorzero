@@ -174,15 +174,15 @@ if command -v jq >/dev/null 2>&1; then
     printf "Success Rate: %.2f%%\n" "$SUCCESS_RATE"
     printf "Throughput:   %.2f req/s\n" "$THROUGHPUT"
     
-    # Basic threshold check using awk instead of bc for better compatibility
-    # With 1000 req/s, we expect higher latencies
+    # Strict threshold check - P99 must be under 1.5ms
     echo ""
-    if [ $(awk -v p99="$LATENCY_P99" 'BEGIN { print (p99 > 100.0) }') -eq 1 ]; then
-        echo -e "${YELLOW}⚠️  Warning: P99 latency is high (${LATENCY_P99}ms > 100ms)${NC}"
+    if [ $(awk -v p99="$LATENCY_P99" 'BEGIN { print (p99 > 1.5) }') -eq 1 ]; then
+        echo -e "${RED}❌ Error: P99 latency (${LATENCY_P99}ms) exceeds threshold (1.5ms)${NC}"
+        exit 1
     fi
     
-    if [ $(awk -v sr="$SUCCESS_RATE" 'BEGIN { print (sr < 95.0) }') -eq 1 ]; then
-        echo -e "${RED}❌ Error: Success rate is too low (${SUCCESS_RATE}% < 95%)${NC}"
+    if [ $(awk -v sr="$SUCCESS_RATE" 'BEGIN { print (sr < 99.9) }') -eq 1 ]; then
+        echo -e "${RED}❌ Error: Success rate (${SUCCESS_RATE}%) below threshold (99.9%)${NC}"
         exit 1
     fi
 fi
