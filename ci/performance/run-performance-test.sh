@@ -94,12 +94,13 @@ MOCK_PID=$!
 # Wait for mock provider to be ready
 echo "⏳ Waiting for mock provider to be ready..."
 for i in {1..30}; do
-    if curl -s -f http://localhost:3030/health >/dev/null 2>&1; then
+    # Check if the mock provider is listening on port 3030
+    if nc -z localhost 3030 2>/dev/null; then
         echo -e "${GREEN}✓ Mock provider is ready${NC}"
         break
     fi
     if [ $i -eq 30 ]; then
-        echo -e "${RED}❌ Mock provider failed to become healthy${NC}"
+        echo -e "${RED}❌ Mock provider failed to start${NC}"
         echo "Mock provider logs:"
         cat mock-provider.log
         exit 1
