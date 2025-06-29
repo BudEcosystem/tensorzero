@@ -1638,11 +1638,8 @@ pub async fn moderation_handler(
         }
     }
 
-    let response = response.ok_or_else(|| {
-        Error::new(ErrorDetails::Config {
-            message: format!("No providers available for moderation model '{resolved_model_name}'"),
-        })
-    })?;
+    let response = response
+        .ok_or_else(|| Error::new(ErrorDetails::ModelProvidersExhausted { provider_errors }))?;
 
     // Convert to OpenAI-compatible format
     let openai_response = OpenAICompatibleModerationResponse {
@@ -1655,7 +1652,7 @@ pub async fn moderation_handler(
 }
 
 // Audio transcription types
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct OpenAICompatibleAudioTranscriptionParams {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1679,7 +1676,7 @@ pub struct OpenAICompatibleAudioTranscriptionParams {
 }
 
 // Audio translation types
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct OpenAICompatibleAudioTranslationParams {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1755,7 +1752,9 @@ pub async fn audio_transcription_handler(
     multipart: axum::extract::Multipart,
 ) -> Result<Response<Body>, Error> {
     // Parse multipart form data
-    let (file_data, filename, params) = parse_audio_multipart(multipart).await?;
+    let (file_data, filename, params) =
+        parse_audio_multipart_generic::<OpenAICompatibleAudioTranscriptionParams>(multipart)
+            .await?;
 
     if !params.unknown_fields.is_empty() {
         tracing::warn!(
@@ -1961,7 +1960,8 @@ pub async fn audio_translation_handler(
     multipart: axum::extract::Multipart,
 ) -> Result<Response<Body>, Error> {
     // Parse multipart form data
-    let (file_data, filename, params) = parse_audio_translation_multipart(multipart).await?;
+    let (file_data, filename, params) =
+        parse_audio_multipart_generic::<OpenAICompatibleAudioTranslationParams>(multipart).await?;
 
     if !params.unknown_fields.is_empty() {
         tracing::warn!(
@@ -2256,179 +2256,94 @@ pub async fn text_to_speech_handler(
 }
 
 // Helper function to parse multipart form data for audio transcription
-async fn parse_audio_multipart(
-    mut multipart: axum::extract::Multipart,
-) -> Result<(Vec<u8>, String, OpenAICompatibleAudioTranscriptionParams), Error> {
-    let mut file_data = None;
-    let mut filename = None;
-    let mut params = OpenAICompatibleAudioTranscriptionParams {
-        model: String::new(),
-        language: None,
-        prompt: None,
-        response_format: None,
-        temperature: None,
-        timestamp_granularities: None,
-        chunking_strategy: None,
-        include: None,
-        stream: None,
-        unknown_fields: HashMap::new(),
-    };
+// Trait for parsing audio multipart parameters
+trait AudioMultipartParams: Default {
+    fn set_field(&mut self, name: &str, value: String) -> Result<(), Error>;
+    fn model(&self) -> &str;
+}
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        Error::new(ErrorDetails::InvalidRequest {
-            message: format!("Failed to parse multipart field: {e}"),
-        })
-    })? {
-        let name = field.name().unwrap_or("").to_string();
+impl AudioMultipartParams for OpenAICompatibleAudioTranscriptionParams {
+    fn model(&self) -> &str {
+        &self.model
+    }
 
-        match name.as_str() {
-            "file" => {
-                filename = Some(field.file_name().unwrap_or("audio").to_string());
-                file_data = Some(
-                    field
-                        .bytes()
-                        .await
-                        .map_err(|e| {
-                            Error::new(ErrorDetails::InvalidRequest {
-                                message: format!("Failed to read file data: {e}"),
-                            })
-                        })?
-                        .to_vec(),
-                );
-            }
-            "model" => {
-                params.model = field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read model field: {e}"),
-                    })
-                })?;
-            }
-            "language" => {
-                params.language = Some(field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read language field: {e}"),
-                    })
-                })?);
-            }
-            "prompt" => {
-                params.prompt = Some(field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read prompt field: {e}"),
-                    })
-                })?);
-            }
-            "response_format" => {
-                params.response_format = Some(field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read response_format field: {e}"),
-                    })
-                })?);
-            }
+    fn set_field(&mut self, name: &str, value: String) -> Result<(), Error> {
+        match name {
+            "model" => self.model = value,
+            "language" => self.language = Some(value),
+            "prompt" => self.prompt = Some(value),
+            "response_format" => self.response_format = Some(value),
             "temperature" => {
-                let temp_str = field.text().await.map_err(|e| {
+                self.temperature = Some(value.parse().map_err(|e| {
                     Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read temperature field: {e}"),
-                    })
-                })?;
-                params.temperature = Some(temp_str.parse().map_err(|_| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: "Invalid temperature value".to_string(),
+                        message: format!("Invalid temperature value: {e}"),
                     })
                 })?);
             }
             "timestamp_granularities[]" => {
-                let granularity = field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read timestamp_granularities field: {e}"),
-                    })
-                })?;
-                params
-                    .timestamp_granularities
+                self.timestamp_granularities
                     .get_or_insert_with(Vec::new)
-                    .push(granularity);
+                    .push(value);
             }
             "chunking_strategy" => {
-                let strategy_str = field.text().await.map_err(|e| {
+                self.chunking_strategy = Some(serde_json::from_str(&value).map_err(|e| {
                     Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read chunking_strategy field: {e}"),
+                        message: format!("Invalid chunking_strategy format: {e}"),
                     })
-                })?;
-                // Parse JSON string to ChunkingStrategy
-                params.chunking_strategy =
-                    Some(serde_json::from_str(&strategy_str).map_err(|e| {
-                        Error::new(ErrorDetails::InvalidRequest {
-                            message: format!("Invalid chunking_strategy format: {e}"),
-                        })
-                    })?);
+                })?);
             }
             "include[]" => {
-                let include_item = field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read include field: {e}"),
-                    })
-                })?;
-                params
-                    .include
-                    .get_or_insert_with(Vec::new)
-                    .push(include_item);
+                self.include.get_or_insert_with(Vec::new).push(value);
             }
             "stream" => {
-                let stream_str = field.text().await.map_err(|e| {
+                self.stream = Some(value.parse().map_err(|e| {
                     Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read stream field: {e}"),
-                    })
-                })?;
-                params.stream = Some(stream_str.parse().map_err(|_| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: "Invalid stream value (must be true or false)".to_string(),
+                        message: format!("Invalid stream value: {e}"),
                     })
                 })?);
             }
             _ => {
-                params
-                    .unknown_fields
-                    .insert(name, Value::String(field.text().await.unwrap_or_default()));
+                self.unknown_fields
+                    .insert(name.to_string(), serde_json::Value::String(value));
             }
         }
+        Ok(())
     }
-
-    let file_data = file_data.ok_or_else(|| {
-        Error::new(ErrorDetails::InvalidRequest {
-            message: "Missing required 'file' field".to_string(),
-        })
-    })?;
-
-    let filename = filename.unwrap_or_else(|| "audio".to_string());
-
-    if params.model.is_empty() {
-        return Err(Error::new(ErrorDetails::InvalidRequest {
-            message: "Missing required 'model' field".to_string(),
-        }));
-    }
-
-    // Validate file size (25MB limit)
-    if file_data.len() > 25 * 1024 * 1024 {
-        return Err(Error::new(ErrorDetails::InvalidRequest {
-            message: "File size exceeds 25MB limit".to_string(),
-        }));
-    }
-
-    Ok((file_data, filename, params))
 }
 
-// Helper function to parse multipart form data for audio translation
-async fn parse_audio_translation_multipart(
+impl AudioMultipartParams for OpenAICompatibleAudioTranslationParams {
+    fn model(&self) -> &str {
+        &self.model
+    }
+
+    fn set_field(&mut self, name: &str, value: String) -> Result<(), Error> {
+        match name {
+            "model" => self.model = value,
+            "prompt" => self.prompt = Some(value),
+            "response_format" => self.response_format = Some(value),
+            "temperature" => {
+                self.temperature = Some(value.parse().map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Invalid temperature value: {e}"),
+                    })
+                })?);
+            }
+            _ => {
+                self.unknown_fields
+                    .insert(name.to_string(), serde_json::Value::String(value));
+            }
+        }
+        Ok(())
+    }
+}
+
+// Generic function to parse audio multipart data
+async fn parse_audio_multipart_generic<P: AudioMultipartParams>(
     mut multipart: axum::extract::Multipart,
-) -> Result<(Vec<u8>, String, OpenAICompatibleAudioTranslationParams), Error> {
+) -> Result<(Vec<u8>, String, P), Error> {
     let mut file_data = None;
     let mut filename = None;
-    let mut params = OpenAICompatibleAudioTranslationParams {
-        model: String::new(),
-        prompt: None,
-        response_format: None,
-        temperature: None,
-        unknown_fields: HashMap::new(),
-    };
+    let mut params = P::default();
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
         Error::new(ErrorDetails::InvalidRequest {
@@ -2452,43 +2367,13 @@ async fn parse_audio_translation_multipart(
                         .to_vec(),
                 );
             }
-            "model" => {
-                params.model = field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read model field: {e}"),
-                    })
-                })?;
-            }
-            "prompt" => {
-                params.prompt = Some(field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read prompt field: {e}"),
-                    })
-                })?);
-            }
-            "response_format" => {
-                params.response_format = Some(field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read response_format field: {e}"),
-                    })
-                })?);
-            }
-            "temperature" => {
-                let temp_str = field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read temperature field: {e}"),
-                    })
-                })?;
-                params.temperature = Some(temp_str.parse().map_err(|_| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: "Invalid temperature value".to_string(),
-                    })
-                })?);
-            }
             _ => {
-                params
-                    .unknown_fields
-                    .insert(name, Value::String(field.text().await.unwrap_or_default()));
+                let value = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read field '{name}': {e}"),
+                    })
+                })?;
+                params.set_field(&name, value)?;
             }
         }
     }
@@ -2501,7 +2386,7 @@ async fn parse_audio_translation_multipart(
 
     let filename = filename.unwrap_or_else(|| "audio".to_string());
 
-    if params.model.is_empty() {
+    if params.model().is_empty() {
         return Err(Error::new(ErrorDetails::InvalidRequest {
             message: "Missing required 'model' field".to_string(),
         }));
@@ -3389,17 +3274,30 @@ mod tests {
         use crate::audio::AudioTranscriptionResponseFormat;
 
         // Test valid formats
-        let json_format: AudioTranscriptionResponseFormat = serde_json::from_str("\"json\"").unwrap();
-        assert!(matches!(json_format, AudioTranscriptionResponseFormat::Json));
+        let json_format: AudioTranscriptionResponseFormat =
+            serde_json::from_str("\"json\"").unwrap();
+        assert!(matches!(
+            json_format,
+            AudioTranscriptionResponseFormat::Json
+        ));
 
-        let text_format: AudioTranscriptionResponseFormat = serde_json::from_str("\"text\"").unwrap();
-        assert!(matches!(text_format, AudioTranscriptionResponseFormat::Text));
+        let text_format: AudioTranscriptionResponseFormat =
+            serde_json::from_str("\"text\"").unwrap();
+        assert!(matches!(
+            text_format,
+            AudioTranscriptionResponseFormat::Text
+        ));
 
-        let verbose_json_format: AudioTranscriptionResponseFormat = serde_json::from_str("\"verbose_json\"").unwrap();
-        assert!(matches!(verbose_json_format, AudioTranscriptionResponseFormat::VerboseJson));
+        let verbose_json_format: AudioTranscriptionResponseFormat =
+            serde_json::from_str("\"verbose_json\"").unwrap();
+        assert!(matches!(
+            verbose_json_format,
+            AudioTranscriptionResponseFormat::VerboseJson
+        ));
 
         // Test invalid format
-        let invalid_format = serde_json::from_str::<AudioTranscriptionResponseFormat>("\"invalid\"");
+        let invalid_format =
+            serde_json::from_str::<AudioTranscriptionResponseFormat>("\"invalid\"");
         assert!(invalid_format.is_err());
     }
 

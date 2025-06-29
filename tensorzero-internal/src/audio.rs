@@ -1,9 +1,11 @@
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::Error;
 use crate::inference::types::{Latency, Usage};
+use futures::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -240,9 +242,6 @@ pub trait TextToSpeechStreamProvider {
 }
 
 pub type AudioStream = Pin<Box<dyn Stream<Item = Result<Vec<u8>, Error>> + Send>>;
-
-use futures::Stream;
-use std::pin::Pin;
 
 impl AudioTranscriptionResponseFormat {
     pub fn as_str(&self) -> &'static str {

@@ -1510,105 +1510,54 @@ impl OpenAIProvider {
     }
 }
 
-pub(super) fn get_chat_url(base_url: &Url) -> Result<Url, Error> {
+// Generic helper function to join URL paths
+fn join_url(base_url: &Url, path: &str) -> Result<Url, Error> {
     let mut url = base_url.clone();
     if !url.path().ends_with('/') {
         url.set_path(&format!("{}/", url.path()));
     }
-    url.join("chat/completions").map_err(|e| {
+    url.join(path).map_err(|e| {
         Error::new(ErrorDetails::InvalidBaseUrl {
             message: e.to_string(),
         })
     })
 }
 
+pub(super) fn get_chat_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "chat/completions")
+}
+
 fn get_file_url(base_url: &Url, file_id: Option<&str>) -> Result<Url, Error> {
-    let mut url = base_url.clone();
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
     let path = if let Some(id) = file_id {
         format!("files/{id}/content")
     } else {
         "files".to_string()
     };
-    url.join(&path).map_err(|e| {
-        Error::new(ErrorDetails::InvalidBaseUrl {
-            message: e.to_string(),
-        })
-    })
+    join_url(base_url, &path)
 }
 
 fn get_batch_url(base_url: &Url) -> Result<Url, Error> {
-    let mut url = base_url.clone();
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
-    url.join("batches").map_err(|e| {
-        Error::new(ErrorDetails::InvalidBaseUrl {
-            message: e.to_string(),
-        })
-    })
+    join_url(base_url, "batches")
 }
 
 fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
-    let mut url = base_url.clone();
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
-    url.join("embeddings").map_err(|e| {
-        Error::new(ErrorDetails::InvalidBaseUrl {
-            message: e.to_string(),
-        })
-    })
+    join_url(base_url, "embeddings")
 }
 
 fn get_moderation_url(base_url: &Url) -> Result<Url, Error> {
-    let mut url = base_url.clone();
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
-    url.join("moderations").map_err(|e| {
-        Error::new(ErrorDetails::InvalidBaseUrl {
-            message: e.to_string(),
-        })
-    })
+    join_url(base_url, "moderations")
 }
 
 fn get_audio_transcription_url(base_url: &Url) -> Result<Url, Error> {
-    let mut url = base_url.clone();
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
-    url.join("audio/transcriptions").map_err(|e| {
-        Error::new(ErrorDetails::InvalidBaseUrl {
-            message: e.to_string(),
-        })
-    })
+    join_url(base_url, "audio/transcriptions")
 }
 
 fn get_audio_translation_url(base_url: &Url) -> Result<Url, Error> {
-    let mut url = base_url.clone();
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
-    url.join("audio/translations").map_err(|e| {
-        Error::new(ErrorDetails::InvalidBaseUrl {
-            message: e.to_string(),
-        })
-    })
+    join_url(base_url, "audio/translations")
 }
 
 fn get_text_to_speech_url(base_url: &Url) -> Result<Url, Error> {
-    let mut url = base_url.clone();
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
-    url.join("audio/speech").map_err(|e| {
-        Error::new(ErrorDetails::InvalidBaseUrl {
-            message: e.to_string(),
-        })
-    })
+    join_url(base_url, "audio/speech")
 }
 
 pub(super) fn handle_openai_error(

@@ -869,11 +869,14 @@ impl crate::audio::TextToSpeechProvider for DummyProvider {
     ) -> Result<crate::audio::TextToSpeechProviderResponse, Error> {
         // Generate dummy audio data - just a small byte array
         let dummy_audio = vec![0u8; 1024]; // 1KB of dummy audio data
-        
+
         let response = crate::audio::TextToSpeechProviderResponse {
             id: request.id,
             audio_data: dummy_audio,
-            format: request.response_format.clone().unwrap_or(crate::audio::AudioOutputFormat::Mp3),
+            format: request
+                .response_format
+                .clone()
+                .unwrap_or(crate::audio::AudioOutputFormat::Mp3),
             created: current_timestamp(),
             raw_request: "dummy tts request".to_string(),
             usage: Usage {
