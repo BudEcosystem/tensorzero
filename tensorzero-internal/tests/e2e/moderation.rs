@@ -1,5 +1,3 @@
-#![expect(clippy::print_stdout)]
-
 use reqwest::Client;
 use serde_json::json;
 
