@@ -1,5 +1,43 @@
 # Benchmarks
 
+## CI Performance Testing
+
+Performance tests run automatically on every PR to detect regressions. The CI system:
+
+1. **Runs high-load performance tests** (30 seconds, 1000 RPS) on every PR
+2. **Tests the OpenAI-compatible `/v1/chat/completions` endpoint**
+3. **Compares results against baseline** from the main branch
+4. **Posts results as a PR comment** with detailed metrics
+5. **Fails if performance doesn't meet strict thresholds**:
+   - P99 latency: Must be under 1.5ms (absolute threshold)
+   - P95 latency: +5% maximum increase allowed
+   - Success rate: 99.9% minimum required
+
+### Running Performance Tests Locally
+
+```bash
+# Run the CI performance test
+./ci/performance/run-performance-test.sh
+
+# Run with custom parameters
+PERF_TEST_DURATION=30s PERF_TEST_RATE=500 ./ci/performance/run-performance-test.sh
+
+# Compare two results
+python ci/performance/compare-performance.py baseline.json current.json
+```
+
+### Performance Test Configuration
+
+The CI tests use:
+- **Mock inference provider**: Simulates OpenAI API with consistent response times
+- **OpenAI-compatible endpoint**: Tests `/v1/chat/completions` for real-world scenarios
+- **High concurrency**: 1000 requests/second with 200 max workers
+- **No observability**: Tests raw gateway performance without telemetry overhead
+- **Warmup phase**: 100 requests before measurement begins
+- **Vegeta load tester**: Industry-standard HTTP load testing tool
+
+## Full Benchmarks
+
 ## TensorZero Gateway vs. LiteLLM Proxy (LiteLLM Gateway)
 
 ### Environment Setup
