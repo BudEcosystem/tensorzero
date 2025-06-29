@@ -279,6 +279,140 @@ jobs:
   build-gateway-container:
     uses: ./.github/workflows/build-gateway-container.yml
 
+  performance-test:
+    # Run performance tests to detect regressions
+    runs-on: ubuntu-latest
+    # Continue even if this job fails (for now, while we stabilize the tests)
+    continue-on-error: true
+    
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          # We need the full history to fetch the baseline from main
+          fetch-depth: 0
+          
+      - uses: dtolnay/rust-toolchain@stable
+      
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+        with:
+          cache-provider: "github"
+          
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsasl2-dev bc jq
+          
+      - name: Install vegeta
+        run: |
+          wget https://github.com/tsenart/vegeta/releases/download/v12.11.1/vegeta_12.11.1_linux_amd64.tar.gz
+          tar xzf vegeta_12.11.1_linux_amd64.tar.gz
+          sudo mv vegeta /usr/local/bin/
+          vegeta -version
+          
+      - name: Build with performance profile
+        run: |
+          cargo build --profile performance --bin gateway --bin mock-inference-provider
+          
+      - name: Run performance test
+        run: |
+          ./ci/performance/run-performance-test.sh
+          
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-results-${{ github.sha }}
+          path: performance-results.json
+          retention-days: 30
+          
+      - name: Download baseline performance results
+        id: baseline
+        continue-on-error: true
+        run: |
+          # Try to download the most recent performance results from main
+          gh run list \
+            --branch main \
+            --workflow pr.yaml \
+            --status success \
+            --limit 10 \
+            --json databaseId,conclusion \
+            --jq '.[] | select(.conclusion=="success") | .databaseId' | \
+          while read -r run_id; do
+            echo "Checking run $run_id for performance artifacts..."
+            if gh run download "$run_id" \
+              --name "performance-results-*" \
+              --dir baseline-results 2>/dev/null; then
+              echo "Found baseline results from run $run_id"
+              # Find the downloaded file
+              BASELINE_FILE=$(find baseline-results -name "performance-results.json" -type f | head -1)
+              if [ -n "$BASELINE_FILE" ]; then
+                cp "$BASELINE_FILE" baseline-performance.json
+                echo "baseline_found=true" >> $GITHUB_OUTPUT
+                break
+              fi
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+          
+      - name: Compare performance results
+        if: steps.baseline.outputs.baseline_found == 'true'
+        id: compare
+        continue-on-error: true
+        run: |
+          python ci/performance/compare-performance.py baseline-performance.json performance-results.json > performance-report.md
+          COMPARISON_EXIT_CODE=$?
+          
+          # Save the report
+          cat performance-report.md
+          
+          # Set output for PR comment
+          {
+            echo 'report<<EOF'
+            cat performance-report.md
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+          
+          exit $COMPARISON_EXIT_CODE
+          
+      - name: Comment PR with performance results
+        if: github.event_name == 'pull_request' && steps.baseline.outputs.baseline_found == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = `${{ steps.compare.outputs.report }}`;
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('## 📊 Performance Test Results')
+            );
+            
+            const commentBody = report || '## 📊 Performance Test Results\n\n⚠️ Performance comparison failed. Check the workflow logs for details.';
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody,
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody,
+              });
+            }
+
 
   # See 'ci/README.md' at the repository root for more details.
   check-all-general-jobs-passed:
