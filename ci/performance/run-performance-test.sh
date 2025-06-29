@@ -8,10 +8,10 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 
 # Configuration
-DURATION="${PERF_TEST_DURATION:-10s}"
-RATE="${PERF_TEST_RATE:-100}"
-TIMEOUT="${PERF_TEST_TIMEOUT:-2s}"
-WARMUP_REQUESTS="${PERF_TEST_WARMUP:-50}"
+DURATION="${PERF_TEST_DURATION:-30s}"
+RATE="${PERF_TEST_RATE:-1000}"
+TIMEOUT="${PERF_TEST_TIMEOUT:-5s}"
+WARMUP_REQUESTS="${PERF_TEST_WARMUP:-100}"
 OUTPUT_FILE="${PERF_TEST_OUTPUT:-performance-results.json}"
 
 # Use release profile in CI to avoid long build times
@@ -130,7 +130,7 @@ done
 echo "🌉 Starting TensorZero gateway..."
 TENSORZERO_CLICKHOUSE_URL="${TENSORZERO_CLICKHOUSE_URL:-}" \
 cargo run --profile "$PROFILE" --bin gateway -- \
-    --config-file "$PROJECT_ROOT/tensorzero-internal/tests/load/tensorzero-without-observability.toml" \
+    --config-file "$SCRIPT_DIR/tensorzero-perf-test.toml" \
     > gateway.log 2>&1 &
 GATEWAY_PID=$!
 
@@ -150,13 +150,13 @@ for i in {1..30}; do
     sleep 1
 done
 
-# Step 4: Test single request
+# Step 4: Test single request to OpenAI endpoint
 echo ""
-echo "🧪 Testing single request..."
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/inference \
+echo "🧪 Testing single request to /v1/chat/completions..."
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/v1/chat/completions \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
-    -d @"$SCRIPT_DIR/test-request.json" \
+    -H "Authorization: Bearer PLACEHOLDER_API_KEY" \
+    -d @"$SCRIPT_DIR/openai-test-request.json" \
     --max-time 5)
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -173,28 +173,31 @@ fi
 echo ""
 echo "🔥 Running warmup requests..."
 # Calculate warmup duration based on number of requests and rate
-WARMUP_DURATION=$(( WARMUP_REQUESTS / 10 ))s
-echo 'POST http://localhost:3000/inference' | \
+WARMUP_DURATION=$(( WARMUP_REQUESTS / 50 ))s
+echo 'POST http://localhost:3000/v1/chat/completions' | \
 vegeta attack \
     -header="Content-Type: application/json" \
-    -header="Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
-    -body="$SCRIPT_DIR/test-request.json" \
+    -header="Authorization: Bearer PLACEHOLDER_API_KEY" \
+    -body="$SCRIPT_DIR/openai-test-request.json" \
     -duration="$WARMUP_DURATION" \
-    -rate=10 \
+    -rate=50 \
     -timeout="$TIMEOUT" \
+    -max-workers=10 \
     > /dev/null 2>&1
 
-# Step 6: Run performance test
+# Step 6: Run performance test with high concurrency
 echo ""
 echo "📊 Running performance test..."
-echo 'POST http://localhost:3000/inference' | \
+echo "🔥 Testing OpenAI-compatible endpoint with ${RATE} req/s for ${DURATION}"
+echo 'POST http://localhost:3000/v1/chat/completions' | \
 vegeta attack \
     -header="Content-Type: application/json" \
-    -header="Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
-    -body="$SCRIPT_DIR/test-request.json" \
+    -header="Authorization: Bearer PLACEHOLDER_API_KEY" \
+    -body="$SCRIPT_DIR/openai-test-request.json" \
     -duration="$DURATION" \
     -rate="$RATE" \
     -timeout="$TIMEOUT" \
+    -max-workers=200 \
     | vegeta encode | \
     vegeta report -type=json > "$OUTPUT_FILE"
 
@@ -228,9 +231,9 @@ if command -v jq >/dev/null 2>&1; then
     echo "🎯 Performance Checks"
     echo "━━━━━━━━━━━━━━━━━━━━"
     
-    # Define thresholds
-    P99_THRESHOLD=50.0  # 50ms
-    SUCCESS_THRESHOLD=99.0  # 99%
+    # Define thresholds for high load (1000 req/s)
+    P99_THRESHOLD=100.0  # 100ms for 1000 req/s
+    SUCCESS_THRESHOLD=95.0  # 95% for high load
     
     CHECKS_PASSED=true
     

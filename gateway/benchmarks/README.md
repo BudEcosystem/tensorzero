@@ -4,13 +4,14 @@
 
 Performance tests run automatically on every PR to detect regressions. The CI system:
 
-1. **Runs lightweight performance tests** (10 seconds, 100 RPS) on every PR
-2. **Compares results against baseline** from the main branch
-3. **Posts results as a PR comment** with detailed metrics
-4. **Fails if regressions exceed thresholds**:
-   - P99 latency: +10% maximum increase allowed
-   - P95 latency: +15% maximum increase allowed
-   - Success rate: -1% maximum decrease allowed
+1. **Runs high-load performance tests** (30 seconds, 1000 RPS) on every PR
+2. **Tests the OpenAI-compatible `/v1/chat/completions` endpoint**
+3. **Compares results against baseline** from the main branch
+4. **Posts results as a PR comment** with detailed metrics
+5. **Fails if regressions exceed thresholds**:
+   - P99 latency: +20% maximum increase allowed
+   - P95 latency: +25% maximum increase allowed
+   - Success rate: -2% maximum decrease allowed
 
 ### Running Performance Tests Locally
 
@@ -28,9 +29,11 @@ python ci/performance/compare-performance.py baseline.json current.json
 ### Performance Test Configuration
 
 The CI tests use:
-- **Mock inference provider**: Simulates OpenAI API with consistent 10ms response time
+- **Mock inference provider**: Simulates OpenAI API with consistent response times
+- **OpenAI-compatible endpoint**: Tests `/v1/chat/completions` for real-world scenarios
+- **High concurrency**: 1000 requests/second with 200 max workers
 - **No observability**: Tests raw gateway performance without telemetry overhead
-- **Warmup phase**: 50 requests before measurement begins
+- **Warmup phase**: 100 requests before measurement begins
 - **Vegeta load tester**: Industry-standard HTTP load testing tool
 
 ## Full Benchmarks

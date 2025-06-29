@@ -8,9 +8,9 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 
 # Configuration
-DURATION="${PERF_TEST_DURATION:-10s}"
-RATE="${PERF_TEST_RATE:-100}"
-TIMEOUT="${PERF_TEST_TIMEOUT:-2s}"
+DURATION="${PERF_TEST_DURATION:-30s}"
+RATE="${PERF_TEST_RATE:-1000}"
+TIMEOUT="${PERF_TEST_TIMEOUT:-5s}"
 OUTPUT_FILE="${PERF_TEST_OUTPUT:-performance-results.json}"
 
 # Colors for output
@@ -99,7 +99,7 @@ done
 
 # Start gateway
 echo "🌉 Starting TensorZero gateway..."
-./target/release/gateway --config-file "$PROJECT_ROOT/tensorzero-internal/tests/load/tensorzero-without-observability.toml" > gateway.log 2>&1 &
+./target/release/gateway --config-file "$SCRIPT_DIR/tensorzero-perf-test.toml" > gateway.log 2>&1 &
 GATEWAY_PID=$!
 
 # Wait for gateway
@@ -116,13 +116,13 @@ for i in {1..20}; do
     sleep 1
 done
 
-# Test single request
+# Test single request to OpenAI chat completions endpoint
 echo ""
-echo "🧪 Testing single request..."
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/inference \
+echo "🧪 Testing single request to /v1/chat/completions..."
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/v1/chat/completions \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
-    -d @"$SCRIPT_DIR/test-request.json" \
+    -H "Authorization: Bearer PLACEHOLDER_API_KEY" \
+    -d @"$SCRIPT_DIR/openai-test-request.json" \
     --max-time 5)
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -135,17 +135,19 @@ else
     echo -e "${GREEN}✓ Test request successful${NC}"
 fi
 
-# Run performance test
+# Run performance test with high concurrency
 echo ""
-echo "📊 Running performance test..."
-echo 'POST http://localhost:3000/inference' | \
+echo "📊 Running performance test (${DURATION} @ ${RATE} req/s)..."
+echo "🔥 Testing OpenAI-compatible chat completions endpoint"
+echo 'POST http://localhost:3000/v1/chat/completions' | \
 vegeta attack \
     -header="Content-Type: application/json" \
-    -header="Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
-    -body="$SCRIPT_DIR/test-request.json" \
+    -header="Authorization: Bearer PLACEHOLDER_API_KEY" \
+    -body="$SCRIPT_DIR/openai-test-request.json" \
     -duration="$DURATION" \
     -rate="$RATE" \
     -timeout="$TIMEOUT" \
+    -max-workers=200 \
     | vegeta encode | \
     vegeta report -type=json > "$OUTPUT_FILE"
 
@@ -173,13 +175,14 @@ if command -v jq >/dev/null 2>&1; then
     printf "Throughput:   %.2f req/s\n" "$THROUGHPUT"
     
     # Basic threshold check using awk instead of bc for better compatibility
+    # With 1000 req/s, we expect higher latencies
     echo ""
-    if [ $(awk -v p99="$LATENCY_P99" 'BEGIN { print (p99 > 50.0) }') -eq 1 ]; then
-        echo -e "${YELLOW}⚠️  Warning: P99 latency is high (${LATENCY_P99}ms)${NC}"
+    if [ $(awk -v p99="$LATENCY_P99" 'BEGIN { print (p99 > 100.0) }') -eq 1 ]; then
+        echo -e "${YELLOW}⚠️  Warning: P99 latency is high (${LATENCY_P99}ms > 100ms)${NC}"
     fi
     
-    if [ $(awk -v sr="$SUCCESS_RATE" 'BEGIN { print (sr < 99.0) }') -eq 1 ]; then
-        echo -e "${RED}❌ Error: Success rate is too low (${SUCCESS_RATE}%)${NC}"
+    if [ $(awk -v sr="$SUCCESS_RATE" 'BEGIN { print (sr < 95.0) }') -eq 1 ]; then
+        echo -e "${RED}❌ Error: Success rate is too low (${SUCCESS_RATE}% < 95%)${NC}"
         exit 1
     fi
 fi

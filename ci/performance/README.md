@@ -14,10 +14,10 @@ Main performance test runner that:
 - Performs basic threshold checks
 
 **Environment Variables:**
-- `PERF_TEST_DURATION`: Test duration (default: 10s)
-- `PERF_TEST_RATE`: Requests per second (default: 100)
-- `PERF_TEST_TIMEOUT`: Request timeout (default: 2s)
-- `PERF_TEST_WARMUP`: Number of warmup requests (default: 50)
+- `PERF_TEST_DURATION`: Test duration (default: 30s)
+- `PERF_TEST_RATE`: Requests per second (default: 1000)
+- `PERF_TEST_TIMEOUT`: Request timeout (default: 5s)
+- `PERF_TEST_WARMUP`: Number of warmup requests (default: 100)
 - `PERF_TEST_OUTPUT`: Output file path (default: performance-results.json)
 
 ### `compare-performance.py`
@@ -45,12 +45,20 @@ The performance test job in `.github/workflows/pr.yaml`:
 
 ## Thresholds
 
-Default regression thresholds:
-- **P99 Latency**: +10% maximum increase
-- **P95 Latency**: +15% maximum increase  
-- **Success Rate**: -1% maximum decrease
+Default regression thresholds (adjusted for high load - 1000 req/s):
+- **P99 Latency**: +20% maximum increase
+- **P95 Latency**: +25% maximum increase  
+- **Success Rate**: -2% maximum decrease
 
 These can be adjusted in `compare-performance.py`.
+
+## Test Details
+
+The performance tests now:
+- Test the **OpenAI-compatible `/v1/chat/completions` endpoint**
+- Use **1000 concurrent requests per second** for 30 seconds
+- Employ **200 max workers** for high concurrency
+- Include **100 warmup requests** before measurement
 
 ## Local Development
 

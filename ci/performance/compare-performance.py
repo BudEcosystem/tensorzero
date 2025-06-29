@@ -106,11 +106,11 @@ def generate_report(baseline_metrics: Dict[str, float], current_metrics: Dict[st
         else:
             report.append(f"| {metric_name} | {baseline:.2f} {unit} | {current:.2f} {unit} | {change_str} |")
     
-    # Regression check
+    # Regression check (adjusted for high load - 1000 req/s)
     thresholds = {
-        'latency_p99': 10.0,  # Allow 10% increase in P99 latency
-        'latency_p95': 15.0,  # Allow 15% increase in P95 latency
-        'success_rate': 1.0,  # Allow 1% decrease in success rate
+        'latency_p99': 20.0,  # Allow 20% increase in P99 latency for high load
+        'latency_p95': 25.0,  # Allow 25% increase in P95 latency for high load
+        'success_rate': 2.0,  # Allow 2% decrease in success rate for high load
     }
     
     has_regression, regressions = check_regression(baseline_metrics, current_metrics, thresholds)
@@ -178,11 +178,11 @@ def main():
     report = generate_report(baseline_metrics, current_metrics)
     print(report)
     
-    # Check for regression
+    # Check for regression (adjusted for high load - 1000 req/s)
     thresholds = {
-        'latency_p99': 10.0,
-        'latency_p95': 15.0,
-        'success_rate': 1.0,
+        'latency_p99': 20.0,
+        'latency_p95': 25.0,
+        'success_rate': 2.0,
     }
     has_regression, _ = check_regression(baseline_metrics, current_metrics, thresholds)
     
