@@ -45,11 +45,12 @@ check_process() {
 
 # Function to cleanup processes
 cleanup() {
+    local exit_code=$?
     echo ""
     echo "🧹 Cleaning up..."
     
     # If we're exiting with an error, show logs
-    if [ $? -ne 0 ]; then
+    if [ $exit_code -ne 0 ]; then
         echo ""
         echo "❌ Test failed. Showing logs:"
         if [ -f gateway.log ]; then
@@ -75,10 +76,27 @@ cleanup() {
         kill "$MOCK_PID" 2>/dev/null || true
         wait "$MOCK_PID" 2>/dev/null || true
     fi
+    
+    # Clean up any processes on our ports
+    lsof -i :3000 | grep -v COMMAND | awk '{print $2}' | xargs -r kill -9 2>/dev/null || true
+    lsof -i :3030 | grep -v COMMAND | awk '{print $2}' | xargs -r kill -9 2>/dev/null || true
 }
 
 # Set up cleanup on exit
 trap cleanup EXIT
+
+# Ensure ports are free before starting
+echo "🔍 Checking for port conflicts..."
+if lsof -i :3000 >/dev/null 2>&1; then
+    echo "  Port 3000 is in use, cleaning up..."
+    lsof -i :3000 | grep -v COMMAND | awk '{print $2}' | xargs -r kill -9 2>/dev/null || true
+    sleep 1
+fi
+if lsof -i :3030 >/dev/null 2>&1; then
+    echo "  Port 3030 is in use, cleaning up..."
+    lsof -i :3030 | grep -v COMMAND | awk '{print $2}' | xargs -r kill -9 2>/dev/null || true
+    sleep 1
+fi
 
 # Step 1: Build everything with selected profile
 echo "📦 Building with $PROFILE profile..."
@@ -132,20 +150,41 @@ for i in {1..30}; do
     sleep 1
 done
 
-# Step 4: Run warmup requests
+# Step 4: Test single request
+echo ""
+echo "🧪 Testing single request..."
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/inference \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
+    -d @"$SCRIPT_DIR/test-request.json" \
+    --max-time 5)
+
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+if [ "$HTTP_CODE" != "200" ]; then
+    echo -e "${RED}❌ Test request failed with HTTP code: $HTTP_CODE${NC}"
+    echo "Response:"
+    echo "$RESPONSE" | head -n-1
+    exit 1
+else
+    echo -e "${GREEN}✓ Test request successful${NC}"
+fi
+
+# Step 5: Run warmup requests
 echo ""
 echo "🔥 Running warmup requests..."
+# Calculate warmup duration based on number of requests and rate
+WARMUP_DURATION=$(( WARMUP_REQUESTS / 10 ))s
 echo 'POST http://localhost:3000/inference' | \
 vegeta attack \
     -header="Content-Type: application/json" \
     -header="Authorization: Bearer budserve_ApTuiKIpZEjMytHt3nmCJqBQGaIlqc2TfoKYFusk" \
     -body="$SCRIPT_DIR/test-request.json" \
-    -duration="${WARMUP_REQUESTS}" \
+    -duration="$WARMUP_DURATION" \
     -rate=10 \
     -timeout="$TIMEOUT" \
     > /dev/null 2>&1
 
-# Step 5: Run performance test
+# Step 6: Run performance test
 echo ""
 echo "📊 Running performance test..."
 echo 'POST http://localhost:3000/inference' | \
@@ -159,7 +198,7 @@ vegeta attack \
     | vegeta encode | \
     vegeta report -type=json > "$OUTPUT_FILE"
 
-# Step 6: Parse and display results
+# Step 7: Parse and display results
 echo ""
 echo "📈 Performance Test Results"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

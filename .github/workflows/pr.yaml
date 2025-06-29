@@ -300,7 +300,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsasl2-dev bc jq
+          sudo apt-get install -y libsasl2-dev jq netcat-openbsd
           
       - name: Install vegeta
         run: |
@@ -316,7 +316,7 @@ jobs:
           
       - name: Run performance test
         run: |
-          CI=true ./ci/performance/run-performance-test.sh
+          ./ci/performance/run-performance-test-ci.sh
           
       - name: Upload performance results
         uses: actions/upload-artifact@v4
