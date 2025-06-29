@@ -30,7 +30,7 @@ pub enum ChunkingStrategy {
     #[serde(rename = "auto")]
     Auto,
     #[serde(rename = "static")]
-    Static { 
+    Static {
         #[serde(skip_serializing_if = "Option::is_none")]
         chunk_size: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,7 +125,7 @@ pub struct TextToSpeechRequest {
     pub speed: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioVoice {
     Alloy,
@@ -141,7 +141,7 @@ pub enum AudioVoice {
     Verse,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioOutputFormat {
     Mp3,
@@ -253,5 +253,120 @@ impl AudioTranscriptionResponseFormat {
             AudioTranscriptionResponseFormat::VerboseJson => "verbose_json",
             AudioTranscriptionResponseFormat::Vtt => "vtt",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_transcription_response_format_as_str() {
+        assert_eq!(AudioTranscriptionResponseFormat::Json.as_str(), "json");
+        assert_eq!(AudioTranscriptionResponseFormat::Text.as_str(), "text");
+        assert_eq!(AudioTranscriptionResponseFormat::Srt.as_str(), "srt");
+        assert_eq!(
+            AudioTranscriptionResponseFormat::VerboseJson.as_str(),
+            "verbose_json"
+        );
+        assert_eq!(AudioTranscriptionResponseFormat::Vtt.as_str(), "vtt");
+    }
+
+    #[test]
+    fn test_audio_voice_serialization() {
+        let voice = AudioVoice::Alloy;
+        let serialized = serde_json::to_string(&voice).unwrap();
+        assert_eq!(serialized, "\"alloy\"");
+
+        let voice = AudioVoice::Nova;
+        let serialized = serde_json::to_string(&voice).unwrap();
+        assert_eq!(serialized, "\"nova\"");
+    }
+
+    #[test]
+    fn test_audio_output_format_serialization() {
+        let format = AudioOutputFormat::Mp3;
+        let serialized = serde_json::to_string(&format).unwrap();
+        assert_eq!(serialized, "\"mp3\"");
+
+        let format = AudioOutputFormat::Wav;
+        let serialized = serde_json::to_string(&format).unwrap();
+        assert_eq!(serialized, "\"wav\"");
+    }
+
+    #[test]
+    fn test_chunking_strategy_serialization() {
+        let strategy = ChunkingStrategy::Auto;
+        let serialized = serde_json::to_string(&strategy).unwrap();
+        assert_eq!(serialized, "{\"type\":\"auto\"}");
+
+        let strategy = ChunkingStrategy::Static {
+            chunk_size: Some(1024),
+            overlap_size: Some(256),
+        };
+        let serialized = serde_json::to_string(&strategy).unwrap();
+        let deserialized: ChunkingStrategy = serde_json::from_str(&serialized).unwrap();
+        match deserialized {
+            ChunkingStrategy::Static {
+                chunk_size,
+                overlap_size,
+            } => {
+                assert_eq!(chunk_size, Some(1024));
+                assert_eq!(overlap_size, Some(256));
+            }
+            _ => panic!("Expected Static variant"),
+        }
+    }
+
+    #[test]
+    fn test_timestamp_granularity_serialization() {
+        let granularity = TimestampGranularity::Word;
+        let serialized = serde_json::to_string(&granularity).unwrap();
+        assert_eq!(serialized, "\"word\"");
+
+        let granularity = TimestampGranularity::Segment;
+        let serialized = serde_json::to_string(&granularity).unwrap();
+        assert_eq!(serialized, "\"segment\"");
+    }
+
+    #[test]
+    fn test_audio_transcription_request_creation() {
+        let request = AudioTranscriptionRequest {
+            id: Uuid::now_v7(),
+            file: vec![1, 2, 3, 4],
+            filename: "test.mp3".to_string(),
+            model: Arc::from("whisper-1"),
+            language: Some("en".to_string()),
+            prompt: None,
+            response_format: Some(AudioTranscriptionResponseFormat::Json),
+            temperature: None,
+            timestamp_granularities: None,
+            chunking_strategy: None,
+            include: None,
+            stream: None,
+        };
+
+        assert_eq!(request.file, vec![1, 2, 3, 4]);
+        assert_eq!(request.filename, "test.mp3");
+        assert_eq!(request.model.as_ref(), "whisper-1");
+        assert_eq!(request.language, Some("en".to_string()));
+    }
+
+    #[test]
+    fn test_text_to_speech_request_creation() {
+        let request = TextToSpeechRequest {
+            id: Uuid::now_v7(),
+            input: "Hello, world!".to_string(),
+            model: Arc::from("tts-1"),
+            voice: AudioVoice::Alloy,
+            response_format: Some(AudioOutputFormat::Mp3),
+            speed: Some(1.0),
+        };
+
+        assert_eq!(request.input, "Hello, world!");
+        assert_eq!(request.model.as_ref(), "tts-1");
+        assert_eq!(request.voice, AudioVoice::Alloy);
+        assert_eq!(request.response_format, Some(AudioOutputFormat::Mp3));
+        assert_eq!(request.speed, Some(1.0));
     }
 }

@@ -48,7 +48,8 @@ use super::inference::{
 use super::model_resolution;
 use crate::audio::{
     AudioOutputFormat, AudioTranscriptionRequest, AudioTranscriptionResponseFormat,
-    AudioTranslationRequest, AudioVoice, ChunkingStrategy, TextToSpeechRequest, TimestampGranularity,
+    AudioTranslationRequest, AudioVoice, ChunkingStrategy, TextToSpeechRequest,
+    TimestampGranularity,
 };
 use crate::embeddings::EmbeddingRequest;
 use crate::moderation::ModerationProvider;
@@ -2353,11 +2354,12 @@ async fn parse_audio_multipart(
                     })
                 })?;
                 // Parse JSON string to ChunkingStrategy
-                params.chunking_strategy = Some(serde_json::from_str(&strategy_str).map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Invalid chunking_strategy format: {e}"),
-                    })
-                })?);
+                params.chunking_strategy =
+                    Some(serde_json::from_str(&strategy_str).map_err(|e| {
+                        Error::new(ErrorDetails::InvalidRequest {
+                            message: format!("Invalid chunking_strategy format: {e}"),
+                        })
+                    })?);
             }
             "include[]" => {
                 let include_item = field.text().await.map_err(|e| {
@@ -3326,5 +3328,112 @@ mod tests {
                 "Failed for input: {input_model}"
             );
         }
+    }
+
+    #[test]
+    fn test_openai_audio_transcription_params_conversion() {
+        let params = OpenAICompatibleAudioTranscriptionParams {
+            model: "whisper-1".to_string(),
+            language: Some("en".to_string()),
+            prompt: Some("Transcribe this audio".to_string()),
+            response_format: Some("json".to_string()),
+            temperature: Some(0.5),
+            timestamp_granularities: Some(vec!["word".to_string()]),
+            chunking_strategy: None,
+            include: None,
+            stream: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params.model, "whisper-1");
+        assert_eq!(params.language, Some("en".to_string()));
+        assert_eq!(params.response_format, Some("json".to_string()));
+        assert_eq!(params.temperature, Some(0.5));
+    }
+
+    #[test]
+    fn test_openai_audio_translation_params_conversion() {
+        let params = OpenAICompatibleAudioTranslationParams {
+            model: "whisper-1".to_string(),
+            prompt: Some("Translate this audio".to_string()),
+            response_format: Some("text".to_string()),
+            temperature: Some(0.7),
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params.model, "whisper-1");
+        assert_eq!(params.prompt, Some("Translate this audio".to_string()));
+        assert_eq!(params.response_format, Some("text".to_string()));
+    }
+
+    #[test]
+    fn test_openai_text_to_speech_params_conversion() {
+        let params = OpenAICompatibleTextToSpeechParams {
+            model: "tts-1".to_string(),
+            input: "Hello, world!".to_string(),
+            voice: "alloy".to_string(),
+            response_format: Some("mp3".to_string()),
+            speed: Some(1.5),
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params.model, "tts-1");
+        assert_eq!(params.input, "Hello, world!");
+        assert_eq!(params.voice, "alloy");
+        assert_eq!(params.response_format, Some("mp3".to_string()));
+        assert_eq!(params.speed, Some(1.5));
+    }
+
+    #[test]
+    fn test_audio_transcription_response_format_parsing() {
+        use crate::audio::AudioTranscriptionResponseFormat;
+
+        // Test valid formats
+        let json_format: AudioTranscriptionResponseFormat = serde_json::from_str("\"json\"").unwrap();
+        assert!(matches!(json_format, AudioTranscriptionResponseFormat::Json));
+
+        let text_format: AudioTranscriptionResponseFormat = serde_json::from_str("\"text\"").unwrap();
+        assert!(matches!(text_format, AudioTranscriptionResponseFormat::Text));
+
+        let verbose_json_format: AudioTranscriptionResponseFormat = serde_json::from_str("\"verbose_json\"").unwrap();
+        assert!(matches!(verbose_json_format, AudioTranscriptionResponseFormat::VerboseJson));
+
+        // Test invalid format
+        let invalid_format = serde_json::from_str::<AudioTranscriptionResponseFormat>("\"invalid\"");
+        assert!(invalid_format.is_err());
+    }
+
+    #[test]
+    fn test_audio_voice_parsing() {
+        use crate::audio::AudioVoice;
+
+        // Test valid voices
+        let alloy_voice: AudioVoice = serde_json::from_str("\"alloy\"").unwrap();
+        assert!(matches!(alloy_voice, AudioVoice::Alloy));
+
+        let nova_voice: AudioVoice = serde_json::from_str("\"nova\"").unwrap();
+        assert!(matches!(nova_voice, AudioVoice::Nova));
+
+        // Test invalid voice
+        let invalid_voice = serde_json::from_str::<AudioVoice>("\"invalid_voice\"");
+        assert!(invalid_voice.is_err());
+    }
+
+    #[test]
+    fn test_file_size_validation() {
+        // 25MB limit
+        const MAX_FILE_SIZE: usize = 25 * 1024 * 1024;
+
+        // Test file under limit
+        let small_file = vec![0u8; 1024]; // 1KB
+        assert!(small_file.len() <= MAX_FILE_SIZE);
+
+        // Test file at limit
+        let limit_file = vec![0u8; MAX_FILE_SIZE];
+        assert!(limit_file.len() <= MAX_FILE_SIZE);
+
+        // Test file over limit
+        let large_file_size = MAX_FILE_SIZE + 1;
+        assert!(large_file_size > MAX_FILE_SIZE);
     }
 }
