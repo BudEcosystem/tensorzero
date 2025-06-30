@@ -285,7 +285,11 @@ pub trait ResponseProvider {
         client: &reqwest::Client,
         api_keys: &crate::endpoints::inference::InferenceCredentials,
     ) -> Result<
-        Box<dyn futures::Stream<Item = Result<ResponseStreamEvent, crate::error::Error>> + Send + Unpin>,
+        Box<
+            dyn futures::Stream<Item = Result<ResponseStreamEvent, crate::error::Error>>
+                + Send
+                + Unpin,
+        >,
         crate::error::Error,
     >;
 
@@ -333,7 +337,9 @@ mod tests {
             model: "gpt-4".to_string(),
             input: json!("Hello, world!"),
             instructions: Some("Be helpful".to_string()),
-            tools: Some(vec![json!({"type": "function", "function": {"name": "test"}})]),
+            tools: Some(vec![
+                json!({"type": "function", "function": {"name": "test"}}),
+            ]),
             tool_choice: Some(json!("auto")),
             parallel_tool_calls: Some(true),
             max_tool_calls: Some(5),
@@ -389,8 +395,14 @@ mod tests {
 
         let params: OpenAIResponseCreateParams = serde_json::from_str(json_str).unwrap();
         assert_eq!(params.model, "gpt-4");
-        assert_eq!(params.unknown_fields.get("custom_field").unwrap(), &json!("custom_value"));
-        assert_eq!(params.unknown_fields.get("another_field").unwrap(), &json!(123));
+        assert_eq!(
+            params.unknown_fields.get("custom_field").unwrap(),
+            &json!("custom_value")
+        );
+        assert_eq!(
+            params.unknown_fields.get("another_field").unwrap(),
+            &json!(123)
+        );
     }
 
     #[test]
@@ -443,10 +455,22 @@ mod tests {
 
     #[test]
     fn test_response_status_serialization() {
-        assert_eq!(serde_json::to_string(&ResponseStatus::Completed).unwrap(), r#""completed""#);
-        assert_eq!(serde_json::to_string(&ResponseStatus::Failed).unwrap(), r#""failed""#);
-        assert_eq!(serde_json::to_string(&ResponseStatus::InProgress).unwrap(), r#""in_progress""#);
-        assert_eq!(serde_json::to_string(&ResponseStatus::Incomplete).unwrap(), r#""incomplete""#);
+        assert_eq!(
+            serde_json::to_string(&ResponseStatus::Completed).unwrap(),
+            r#""completed""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ResponseStatus::Failed).unwrap(),
+            r#""failed""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ResponseStatus::InProgress).unwrap(),
+            r#""in_progress""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ResponseStatus::Incomplete).unwrap(),
+            r#""incomplete""#
+        );
     }
 
     #[test]
@@ -463,9 +487,18 @@ mod tests {
 
     #[test]
     fn test_response_event_type_serialization() {
-        assert_eq!(serde_json::to_string(&ResponseEventType::ResponseCreated).unwrap(), r#""response_created""#);
-        assert_eq!(serde_json::to_string(&ResponseEventType::ContentBlockDelta).unwrap(), r#""content_block_delta""#);
-        assert_eq!(serde_json::to_string(&ResponseEventType::ToolUseBlockStart).unwrap(), r#""tool_use_block_start""#);
+        assert_eq!(
+            serde_json::to_string(&ResponseEventType::ResponseCreated).unwrap(),
+            r#""response_created""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ResponseEventType::ContentBlockDelta).unwrap(),
+            r#""content_block_delta""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ResponseEventType::ToolUseBlockStart).unwrap(),
+            r#""tool_use_block_start""#
+        );
     }
 
     #[test]

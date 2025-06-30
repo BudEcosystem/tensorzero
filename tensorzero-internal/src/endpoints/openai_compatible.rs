@@ -26,7 +26,8 @@ use uuid::Uuid;
 
 use crate::cache::CacheParamsOptions;
 use crate::endpoints::inference::{
-    inference, ChatCompletionInferenceParams, InferenceClients, InferenceCredentials, InferenceParams, Params,
+    inference, ChatCompletionInferenceParams, InferenceClients, InferenceCredentials,
+    InferenceParams, Params,
 };
 use crate::error::{Error, ErrorDetails};
 use crate::gateway_util::{AppState, AppStateData, StructuredJson};
@@ -42,8 +43,7 @@ use crate::tool::{
 use crate::variant::JsonMode;
 
 use super::inference::{
-    InferenceOutput, InferenceResponse, InferenceResponseChunk,
-    InferenceStream,
+    InferenceOutput, InferenceResponse, InferenceResponseChunk, InferenceStream,
 };
 use super::model_resolution;
 use crate::audio::{
@@ -2481,11 +2481,11 @@ pub async fn response_create_handler(
 
         // Convert to SSE stream
         let sse_stream = stream.map(|result| match result {
-            Ok(event) => Event::default()
-                .json_data(event)
-                .map_err(|e| Error::new(ErrorDetails::Inference {
+            Ok(event) => Event::default().json_data(event).map_err(|e| {
+                Error::new(ErrorDetails::Inference {
                     message: format!("Failed to serialize SSE event: {e}"),
-                })),
+                })
+            }),
             Err(e) => Err(e),
         });
 
@@ -2501,6 +2501,17 @@ pub async fn response_create_handler(
 }
 
 /// Handler for retrieving a response (GET /v1/responses/{response_id})
+///
+/// Note: Since the OpenAI API doesn't include a model parameter for retrieval operations,
+/// you must specify the model name using the 'x-model-name' header. If not provided,
+/// it defaults to 'gpt-4-responses'.
+///
+/// Example:
+/// ```
+/// curl -X GET http://localhost:3000/v1/responses/resp_123 \
+///   -H "Authorization: Bearer YOUR_API_KEY" \
+///   -H "x-model-name: your-model-name"
+/// ```
 #[debug_handler(state = AppStateData)]
 pub async fn response_retrieve_handler(
     State(AppStateData {
@@ -2520,7 +2531,7 @@ pub async fn response_retrieve_handler(
         .get("x-model-name")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("gpt-4-responses"); // Default model name
-    
+
     // Get the model configuration
     use crate::model::ModelTableExt;
     let models = config.models.read().await;
@@ -2533,8 +2544,7 @@ pub async fn response_retrieve_handler(
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
                 message: format!(
-                    "Model '{}' not found or does not support responses",
-                    model_name
+                    "Model '{model_name}' not found or does not support responses"
                 ),
             })
         })?;
@@ -2549,29 +2559,44 @@ pub async fn response_retrieve_handler(
         },
     };
 
-    let response = model.retrieve_response(&response_id, model_name, &clients).await?;
-    
+    let response = model
+        .retrieve_response(&response_id, model_name, &clients)
+        .await?;
+
     let body = serde_json::to_string(&response).map_err(|e| {
         Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to serialize response: {}", e),
+            message: format!("Failed to serialize response: {e}"),
             raw_request: None,
             raw_response: None,
             provider_type: "gateway".to_string(),
         })
     })?;
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(body))
-        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to build response: {}", e),
-            raw_request: None,
-            raw_response: None,
-            provider_type: "gateway".to_string(),
-        }))?)
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
 }
 
 /// Handler for deleting a response (DELETE /v1/responses/{response_id})
+///
+/// Note: Since the OpenAI API doesn't include a model parameter for deletion operations,
+/// you must specify the model name using the 'x-model-name' header. If not provided,
+/// it defaults to 'gpt-4-responses'.
+///
+/// Example:
+/// ```
+/// curl -X DELETE http://localhost:3000/v1/responses/resp_123 \
+///   -H "Authorization: Bearer YOUR_API_KEY" \
+///   -H "x-model-name: your-model-name"
+/// ```
 #[debug_handler(state = AppStateData)]
 pub async fn response_delete_handler(
     State(AppStateData {
@@ -2588,7 +2613,7 @@ pub async fn response_delete_handler(
         .get("x-model-name")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("gpt-4-responses");
-    
+
     use crate::model::ModelTableExt;
     let models = config.models.read().await;
     let model = models
@@ -2600,8 +2625,7 @@ pub async fn response_delete_handler(
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
                 message: format!(
-                    "Model '{}' not found or does not support responses",
-                    model_name
+                    "Model '{model_name}' not found or does not support responses"
                 ),
             })
         })?;
@@ -2616,29 +2640,44 @@ pub async fn response_delete_handler(
         },
     };
 
-    let response = model.delete_response(&response_id, model_name, &clients).await?;
-    
+    let response = model
+        .delete_response(&response_id, model_name, &clients)
+        .await?;
+
     let body = serde_json::to_string(&response).map_err(|e| {
         Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to serialize response: {}", e),
+            message: format!("Failed to serialize response: {e}"),
             raw_request: None,
             raw_response: None,
             provider_type: "gateway".to_string(),
         })
     })?;
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(body))
-        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to build response: {}", e),
-            raw_request: None,
-            raw_response: None,
-            provider_type: "gateway".to_string(),
-        }))?)
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
 }
 
 /// Handler for cancelling a response (POST /v1/responses/{response_id}/cancel)
+///
+/// Note: Since the OpenAI API doesn't include a model parameter for cancellation operations,
+/// you must specify the model name using the 'x-model-name' header. If not provided,
+/// it defaults to 'gpt-4-responses'.
+///
+/// Example:
+/// ```
+/// curl -X POST http://localhost:3000/v1/responses/resp_123/cancel \
+///   -H "Authorization: Bearer YOUR_API_KEY" \
+///   -H "x-model-name: your-model-name"
+/// ```
 #[debug_handler(state = AppStateData)]
 pub async fn response_cancel_handler(
     State(AppStateData {
@@ -2655,7 +2694,7 @@ pub async fn response_cancel_handler(
         .get("x-model-name")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("gpt-4-responses");
-    
+
     use crate::model::ModelTableExt;
     let models = config.models.read().await;
     let model = models
@@ -2667,8 +2706,7 @@ pub async fn response_cancel_handler(
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
                 message: format!(
-                    "Model '{}' not found or does not support responses",
-                    model_name
+                    "Model '{model_name}' not found or does not support responses"
                 ),
             })
         })?;
@@ -2683,29 +2721,44 @@ pub async fn response_cancel_handler(
         },
     };
 
-    let response = model.cancel_response(&response_id, model_name, &clients).await?;
-    
+    let response = model
+        .cancel_response(&response_id, model_name, &clients)
+        .await?;
+
     let body = serde_json::to_string(&response).map_err(|e| {
         Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to serialize response: {}", e),
+            message: format!("Failed to serialize response: {e}"),
             raw_request: None,
             raw_response: None,
             provider_type: "gateway".to_string(),
         })
     })?;
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(body))
-        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to build response: {}", e),
-            raw_request: None,
-            raw_response: None,
-            provider_type: "gateway".to_string(),
-        }))?)
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
 }
 
 /// Handler for listing response input items (GET /v1/responses/{response_id}/input_items)
+///
+/// Note: Since the OpenAI API doesn't include a model parameter for listing operations,
+/// you must specify the model name using the 'x-model-name' header. If not provided,
+/// it defaults to 'gpt-4-responses'.
+///
+/// Example:
+/// ```
+/// curl -X GET http://localhost:3000/v1/responses/resp_123/input_items \
+///   -H "Authorization: Bearer YOUR_API_KEY" \
+///   -H "x-model-name: your-model-name"
+/// ```
 #[debug_handler(state = AppStateData)]
 pub async fn response_input_items_handler(
     State(AppStateData {
@@ -2722,7 +2775,7 @@ pub async fn response_input_items_handler(
         .get("x-model-name")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("gpt-4-responses");
-    
+
     use crate::model::ModelTableExt;
     let models = config.models.read().await;
     let model = models
@@ -2734,8 +2787,7 @@ pub async fn response_input_items_handler(
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
                 message: format!(
-                    "Model '{}' not found or does not support responses",
-                    model_name
+                    "Model '{model_name}' not found or does not support responses"
                 ),
             })
         })?;
@@ -2750,26 +2802,30 @@ pub async fn response_input_items_handler(
         },
     };
 
-    let response = model.list_response_input_items(&response_id, model_name, &clients).await?;
-    
+    let response = model
+        .list_response_input_items(&response_id, model_name, &clients)
+        .await?;
+
     let body = serde_json::to_string(&response).map_err(|e| {
         Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to serialize response: {}", e),
+            message: format!("Failed to serialize response: {e}"),
             raw_request: None,
             raw_response: None,
             provider_type: "gateway".to_string(),
         })
     })?;
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(body))
-        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
-            message: format!("Failed to build response: {}", e),
-            raw_request: None,
-            raw_response: None,
-            provider_type: "gateway".to_string(),
-        }))?)
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
 }
 
 #[cfg(test)]
@@ -3858,7 +3914,10 @@ mod tests {
         let param_metadata = params.metadata.unwrap();
         assert_eq!(param_metadata.get("user_id").unwrap(), &json!("12345"));
         assert_eq!(param_metadata.get("session_id").unwrap(), &json!("abc-def"));
-        assert_eq!(param_metadata.get("custom_data").unwrap(), &json!({"key": "value"}));
+        assert_eq!(
+            param_metadata.get("custom_data").unwrap(),
+            &json!({"key": "value"})
+        );
     }
 
     #[test]
@@ -3923,7 +3982,10 @@ mod tests {
             unknown_fields: HashMap::new(),
         };
 
-        assert_eq!(params_multimodal.modalities, Some(vec!["text".to_string(), "audio".to_string()]));
+        assert_eq!(
+            params_multimodal.modalities,
+            Some(vec!["text".to_string(), "audio".to_string()])
+        );
     }
 
     #[test]
@@ -3951,7 +4013,7 @@ mod tests {
             }),
             json!({
                 "type": "code_interpreter"
-            })
+            }),
         ];
 
         let params = OpenAIResponseCreateParams {

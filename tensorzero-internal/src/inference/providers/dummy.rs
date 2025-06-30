@@ -30,11 +30,11 @@ use crate::moderation::{
     ModerationCategories, ModerationCategoryScores, ModerationProvider, ModerationProviderResponse,
     ModerationRequest, ModerationResult,
 };
-use crate::tool::{ToolCall, ToolCallChunk};
 use crate::responses::{
     OpenAIResponse, OpenAIResponseCreateParams, ResponseError, ResponseInputItemsList,
     ResponseProvider, ResponseStatus, ResponseStreamEvent, ResponseUsage,
 };
+use crate::tool::{ToolCall, ToolCallChunk};
 
 const PROVIDER_NAME: &str = "Dummy";
 const PROVIDER_TYPE: &str = "dummy";
@@ -961,7 +961,7 @@ impl ResponseProvider for DummyProvider {
             user: request.user.clone(),
             metadata: request.metadata.clone().or(Some(HashMap::new())),
         };
-        
+
         Ok(response)
     }
 
@@ -1017,11 +1017,14 @@ impl ResponseProvider for DummyProvider {
                 }),
             },
         ];
-        
+
         // Create a stream without throttle to avoid Unpin issues
         let stream = tokio_stream::iter(events.into_iter().map(Ok));
-            
-        Ok(Box::new(stream) as Box<dyn futures::Stream<Item = Result<ResponseStreamEvent, Error>> + Send + Unpin>)
+
+        Ok(Box::new(stream)
+            as Box<
+                dyn futures::Stream<Item = Result<ResponseStreamEvent, Error>> + Send + Unpin,
+            >)
     }
 
     async fn retrieve_response(
@@ -1148,7 +1151,7 @@ impl ResponseProvider for DummyProvider {
                 }),
                 json!({
                     "id": format!("item_2_{}", response_id),
-                    "type": "text", 
+                    "type": "text",
                     "text": "Second input item"
                 }),
             ],

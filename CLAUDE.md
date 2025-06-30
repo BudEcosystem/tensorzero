@@ -357,6 +357,7 @@ Implemented by:
 2. **Streaming Reuse**: Uses existing streaming infrastructure from chat completions
 3. **Error Handling**: Non-supported operations return clear error messages
 4. **Unknown Fields**: Accepted with warnings for forward compatibility
+5. **Model Resolution for Non-Create Operations**: Since OpenAI's API doesn't include a model parameter for retrieve/delete/cancel/list operations, TensorZero requires the model name to be specified via the `x-model-name` header. If not provided, it defaults to `gpt-4-responses`.
 
 ### Testing Responses API
 
@@ -364,8 +365,9 @@ Implemented by:
 2. **Integration Tests**: Handler logic and model resolution
 3. **E2E Tests**: Full request/response cycle (in `tests/e2e/responses.rs`)
 
-Example test request:
+Example test requests:
 ```bash
+# Create a response
 curl -X POST http://localhost:3000/v1/responses \
   -H "Authorization: Bearer test-key" \
   -H "Content-Type: application/json" \
@@ -375,6 +377,26 @@ curl -X POST http://localhost:3000/v1/responses \
     "instructions": "Be helpful",
     "stream": true
   }'
+
+# Retrieve a response (note the x-model-name header)
+curl -X GET http://localhost:3000/v1/responses/resp_123 \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
+
+# Delete a response
+curl -X DELETE http://localhost:3000/v1/responses/resp_123 \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
+
+# Cancel a response
+curl -X POST http://localhost:3000/v1/responses/resp_123/cancel \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
+
+# List input items
+curl -X GET http://localhost:3000/v1/responses/resp_123/input_items \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
 ```
 
 ### Future Considerations

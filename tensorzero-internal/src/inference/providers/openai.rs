@@ -3020,8 +3020,8 @@ struct OpenAIBatchFileResponse {
 }
 
 use crate::responses::{
-    OpenAIResponse as ResponsesOpenAIResponse, OpenAIResponseCreateParams,
-    ResponseInputItemsList, ResponseProvider, ResponseStreamEvent,
+    OpenAIResponse as ResponsesOpenAIResponse, OpenAIResponseCreateParams, ResponseInputItemsList,
+    ResponseProvider, ResponseStreamEvent,
 };
 
 #[async_trait::async_trait]
@@ -3033,33 +3033,30 @@ impl ResponseProvider for OpenAIProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<ResponsesOpenAIResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let request_url = get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+        let request_url =
+            get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
         let _start_time = Instant::now();
-        
+
         let mut request_builder = client
             .post(request_url)
             .header("Content-Type", "application/json");
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
-        
-        let res = request_builder
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| {
-                Error::new(ErrorDetails::InferenceClient {
-                    status_code: e.status(),
-                    message: format!(
-                        "Error sending request to OpenAI Responses API: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
-                    raw_response: None,
-                })
-            })?;
-            
+
+        let res = request_builder.json(&request).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending request to OpenAI Responses API: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                raw_response: None,
+            })
+        })?;
+
         if res.status().is_success() {
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
@@ -3073,18 +3070,19 @@ impl ResponseProvider for OpenAIProvider {
                 })
             })?;
 
-            let response: ResponsesOpenAIResponse = serde_json::from_str(&raw_response).map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!(
-                        "Error parsing JSON response: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
-                    raw_response: Some(raw_response.clone()),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
-            
+            let response: ResponsesOpenAIResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
             Ok(response)
         } else {
             Err(handle_openai_error(
@@ -3116,20 +3114,21 @@ impl ResponseProvider for OpenAIProvider {
         Error,
     > {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let request_url = get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+        let request_url =
+            get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
         let _start_time = Instant::now();
-        
+
         let mut request_builder = client
             .post(request_url)
             .header("Content-Type", "application/json");
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
-        
+
         // Make sure stream is enabled
         let mut request_with_stream = request.clone();
         request_with_stream.stream = Some(true);
-        
+
         let event_source = request_builder
             .json(&request_with_stream)
             .eventsource()
@@ -3141,11 +3140,13 @@ impl ResponseProvider for OpenAIProvider {
                         DisplayOrDebugGateway::new(e)
                     ),
                     provider_type: PROVIDER_TYPE.to_string(),
-                    raw_request: Some(serde_json::to_string(&request_with_stream).unwrap_or_default()),
+                    raw_request: Some(
+                        serde_json::to_string(&request_with_stream).unwrap_or_default(),
+                    ),
                     raw_response: None,
                 })
             })?;
-            
+
         let inner_stream = async_stream::stream! {
             futures::pin_mut!(event_source);
             while let Some(ev) = event_source.next().await {
@@ -3159,7 +3160,7 @@ impl ResponseProvider for OpenAIProvider {
                             if message.data == "[DONE]" {
                                 break;
                             }
-                            
+
                             let stream_event: Result<ResponseStreamEvent, Error> =
                                 serde_json::from_str(&message.data).map_err(|e| {
                                     Error::new(ErrorDetails::InferenceServer {
@@ -3169,7 +3170,7 @@ impl ResponseProvider for OpenAIProvider {
                                         provider_type: PROVIDER_TYPE.to_string(),
                                     })
                                 });
-                                
+
                             match stream_event {
                                 Ok(event) => yield Ok(event),
                                 Err(e) => yield Err(e),
@@ -3179,18 +3180,18 @@ impl ResponseProvider for OpenAIProvider {
                 }
             }
         };
-        
+
         // Use Box::pin to create a pinned box that implements Stream + Send but not necessarily Unpin
         // Then convert it to the required type
         use futures::stream::StreamExt;
         let pinned_stream = Box::pin(inner_stream);
-        
+
         // Convert to a type that implements Unpin
         struct UnpinStream<S>(Pin<Box<S>>);
-        
+
         impl<S: Stream> Stream for UnpinStream<S> {
             type Item = S::Item;
-            
+
             fn poll_next(
                 mut self: Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -3198,12 +3199,12 @@ impl ResponseProvider for OpenAIProvider {
                 self.0.as_mut().poll_next(cx)
             }
         }
-        
+
         // UnpinStream implements Unpin regardless of whether S does
         impl<S> Unpin for UnpinStream<S> {}
-        
+
         let unpin_stream = UnpinStream(pinned_stream);
-        
+
         Ok(Box::new(unpin_stream))
     }
 
@@ -3214,49 +3215,61 @@ impl ResponseProvider for OpenAIProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<ResponsesOpenAIResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = self.api_base.as_ref()
+        let url = self
+            .api_base
+            .as_ref()
             .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
-            .join(&format!("responses/{}", response_id))
+            .join(&format!("responses/{response_id}"))
             .map_err(|e| {
                 Error::new(ErrorDetails::Config {
                     message: format!("Failed to construct response URL: {e}"),
                 })
             })?;
-        
+
         let mut request_builder = client.get(url);
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
-        
+
         let res = request_builder.send().await.map_err(|e| {
             Error::new(ErrorDetails::InferenceClient {
                 status_code: e.status(),
-                message: format!("Error retrieving response: {}", DisplayOrDebugGateway::new(e)),
+                message: format!(
+                    "Error retrieving response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
                 provider_type: PROVIDER_TYPE.to_string(),
                 raw_request: None,
                 raw_response: None,
             })
         })?;
-        
+
         if res.status().is_success() {
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
                     raw_request: None,
                     raw_response: None,
                     provider_type: PROVIDER_TYPE.to_string(),
                 })
             })?;
-            
-            let response: ResponsesOpenAIResponse = serde_json::from_str(&raw_response).map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
-                    raw_request: None,
-                    raw_response: Some(raw_response.clone()),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
-            
+
+            let response: ResponsesOpenAIResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: None,
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
             Ok(response)
         } else {
             Err(handle_openai_error(
@@ -3275,20 +3288,22 @@ impl ResponseProvider for OpenAIProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<serde_json::Value, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = self.api_base.as_ref()
+        let url = self
+            .api_base
+            .as_ref()
             .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
-            .join(&format!("responses/{}", response_id))
+            .join(&format!("responses/{response_id}"))
             .map_err(|e| {
                 Error::new(ErrorDetails::Config {
                     message: format!("Failed to construct response URL: {e}"),
                 })
             })?;
-        
+
         let mut request_builder = client.delete(url);
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
-        
+
         let res = request_builder.send().await.map_err(|e| {
             Error::new(ErrorDetails::InferenceClient {
                 status_code: e.status(),
@@ -3298,26 +3313,32 @@ impl ResponseProvider for OpenAIProvider {
                 raw_response: None,
             })
         })?;
-        
+
         if res.status().is_success() {
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
                     raw_request: None,
                     raw_response: None,
                     provider_type: PROVIDER_TYPE.to_string(),
                 })
             })?;
-            
+
             let response: serde_json::Value = serde_json::from_str(&raw_response).map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
+                    message: format!(
+                        "Error parsing JSON response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
                     raw_request: None,
                     raw_response: Some(raw_response.clone()),
                     provider_type: PROVIDER_TYPE.to_string(),
                 })
             })?;
-            
+
             Ok(response)
         } else {
             Err(handle_openai_error(
@@ -3336,49 +3357,61 @@ impl ResponseProvider for OpenAIProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<ResponsesOpenAIResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = self.api_base.as_ref()
+        let url = self
+            .api_base
+            .as_ref()
             .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
-            .join(&format!("responses/{}/cancel", response_id))
+            .join(&format!("responses/{response_id}/cancel"))
             .map_err(|e| {
                 Error::new(ErrorDetails::Config {
                     message: format!("Failed to construct response cancel URL: {e}"),
                 })
             })?;
-        
+
         let mut request_builder = client.post(url);
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
-        
+
         let res = request_builder.send().await.map_err(|e| {
             Error::new(ErrorDetails::InferenceClient {
                 status_code: e.status(),
-                message: format!("Error cancelling response: {}", DisplayOrDebugGateway::new(e)),
+                message: format!(
+                    "Error cancelling response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
                 provider_type: PROVIDER_TYPE.to_string(),
                 raw_request: None,
                 raw_response: None,
             })
         })?;
-        
+
         if res.status().is_success() {
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
                     raw_request: None,
                     raw_response: None,
                     provider_type: PROVIDER_TYPE.to_string(),
                 })
             })?;
-            
-            let response: ResponsesOpenAIResponse = serde_json::from_str(&raw_response).map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
-                    raw_request: None,
-                    raw_response: Some(raw_response.clone()),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
-            
+
+            let response: ResponsesOpenAIResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: None,
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
             Ok(response)
         } else {
             Err(handle_openai_error(
@@ -3397,49 +3430,61 @@ impl ResponseProvider for OpenAIProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<ResponseInputItemsList, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = self.api_base.as_ref()
+        let url = self
+            .api_base
+            .as_ref()
             .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
-            .join(&format!("responses/{}/input_items", response_id))
+            .join(&format!("responses/{response_id}/input_items"))
             .map_err(|e| {
                 Error::new(ErrorDetails::Config {
                     message: format!("Failed to construct response input items URL: {e}"),
                 })
             })?;
-        
+
         let mut request_builder = client.get(url);
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
-        
+
         let res = request_builder.send().await.map_err(|e| {
             Error::new(ErrorDetails::InferenceClient {
                 status_code: e.status(),
-                message: format!("Error listing response input items: {}", DisplayOrDebugGateway::new(e)),
+                message: format!(
+                    "Error listing response input items: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
                 provider_type: PROVIDER_TYPE.to_string(),
                 raw_request: None,
                 raw_response: None,
             })
         })?;
-        
+
         if res.status().is_success() {
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
                     raw_request: None,
                     raw_response: None,
                     provider_type: PROVIDER_TYPE.to_string(),
                 })
             })?;
-            
-            let response: ResponseInputItemsList = serde_json::from_str(&raw_response).map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
-                    raw_request: None,
-                    raw_response: Some(raw_response.clone()),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
-            
+
+            let response: ResponseInputItemsList =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: None,
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
             Ok(response)
         } else {
             Err(handle_openai_error(
@@ -3465,6 +3510,7 @@ fn get_responses_url(base_url: &Url) -> Result<Url, Error> {
 mod tests {
     use serde_json::json;
     use std::borrow::Cow;
+    use std::collections::HashMap;
     use tracing_test::traced_test;
 
     use crate::inference::providers::test_helpers::{
@@ -5005,19 +5051,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_response_provider_url_construction() {
-        use crate::responses::{OpenAIResponseCreateParams, ResponseProvider};
-        use serde_json::json;
-
-        let provider = OpenAIProvider::new(
-            "gpt-4".to_string(),
-            None,
-            None,
-        ).unwrap();
+        let provider =
+            OpenAIProvider::new("gpt-4".to_string(), None, Some(CredentialLocation::None)).unwrap();
 
         // Verify the URL construction for responses endpoint
-        let base_url = provider.base_url();
+        let base_url = provider
+            .api_base
+            .as_ref()
+            .unwrap_or(&OPENAI_DEFAULT_BASE_URL);
         let responses_url = base_url.join("responses").unwrap();
-        assert_eq!(responses_url.as_str(), "https://api.openai.com/v1/responses");
+        assert_eq!(
+            responses_url.as_str(),
+            "https://api.openai.com/v1/responses"
+        );
     }
 
     #[test]
@@ -5055,13 +5101,16 @@ mod tests {
         assert_eq!(json["model"], "gpt-4");
         assert_eq!(json["input"], "Test input");
         assert_eq!(json["instructions"], "Be helpful");
-        assert_eq!(json["temperature"], 0.7);
+        assert!((json["temperature"].as_f64().unwrap() - 0.7).abs() < 0.001);
         assert_eq!(json["max_output_tokens"], 1000);
         assert_eq!(json["stream"], false);
-        
+
         // Verify None fields are not included
         assert!(!json.as_object().unwrap().contains_key("tools"));
-        assert!(!json.as_object().unwrap().contains_key("previous_response_id"));
+        assert!(!json
+            .as_object()
+            .unwrap()
+            .contains_key("previous_response_id"));
         assert!(!json.as_object().unwrap().contains_key("reasoning"));
     }
 
