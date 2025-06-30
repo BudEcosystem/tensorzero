@@ -384,7 +384,9 @@ async fn test_response_operations_with_configured_model() {
 
     // Test retrieve with proper model header
     let retrieve_response = client
-        .get(get_gateway_endpoint(&format!("/openai/v1/responses/{response_id}")))
+        .get(get_gateway_endpoint(&format!(
+            "/openai/v1/responses/{response_id}"
+        )))
         .header("Authorization", "Bearer test-key")
         .header("x-model-name", "dummy-responses")
         .send()
@@ -401,7 +403,9 @@ async fn test_response_operations_with_configured_model() {
 
     // Test without x-model-name header (should use default)
     let retrieve_no_header = client
-        .get(get_gateway_endpoint(&format!("/openai/v1/responses/{response_id}")))
+        .get(get_gateway_endpoint(&format!(
+            "/openai/v1/responses/{response_id}"
+        )))
         .header("Authorization", "Bearer test-key")
         .send()
         .await

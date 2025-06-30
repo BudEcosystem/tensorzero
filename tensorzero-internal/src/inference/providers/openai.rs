@@ -5273,6 +5273,8 @@ mod tests {
         assert_eq!(json["input"][1]["type"], "image_url");
         assert_eq!(json["modalities"][0], "text");
         assert_eq!(json["modalities"][1], "image");
+    }
+
     #[test]
     fn test_openai_request_new_parameters() {
         // Test request with new parameters
