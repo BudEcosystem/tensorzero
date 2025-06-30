@@ -2543,9 +2543,7 @@ pub async fn response_retrieve_handler(
         .await?
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
-                message: format!(
-                    "Model '{model_name}' not found or does not support responses"
-                ),
+                message: format!("Model '{model_name}' not found or does not support responses"),
             })
         })?;
 
@@ -2624,9 +2622,7 @@ pub async fn response_delete_handler(
         .await?
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
-                message: format!(
-                    "Model '{model_name}' not found or does not support responses"
-                ),
+                message: format!("Model '{model_name}' not found or does not support responses"),
             })
         })?;
 
@@ -2705,9 +2701,7 @@ pub async fn response_cancel_handler(
         .await?
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
-                message: format!(
-                    "Model '{model_name}' not found or does not support responses"
-                ),
+                message: format!("Model '{model_name}' not found or does not support responses"),
             })
         })?;
 
@@ -2786,9 +2780,7 @@ pub async fn response_input_items_handler(
         .await?
         .ok_or_else(|| {
             Error::new(ErrorDetails::Config {
-                message: format!(
-                    "Model '{model_name}' not found or does not support responses"
-                ),
+                message: format!("Model '{model_name}' not found or does not support responses"),
             })
         })?;
 
@@ -3763,14 +3755,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_response_create_handler_model_resolution() {
-        use crate::endpoints::model_resolution::ModelResolution;
-        use crate::gateway_util::AppStateData;
         use crate::responses::OpenAIResponseCreateParams;
-        use axum::body::Body;
-        use axum::extract::State;
-        use axum::http::{HeaderMap, StatusCode};
         use serde_json::json;
-        use std::sync::Arc;
 
         // Test that the handler properly resolves model names
         let params = OpenAIResponseCreateParams {

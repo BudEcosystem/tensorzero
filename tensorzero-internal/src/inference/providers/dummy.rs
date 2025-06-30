@@ -1145,19 +1145,19 @@ impl ResponseProvider for DummyProvider {
         Ok(ResponseInputItemsList {
             data: vec![
                 json!({
-                    "id": format!("item_1_{}", response_id),
+                    "id": format!("item_1_{response_id}"),
                     "type": "text",
                     "text": "First input item"
                 }),
                 json!({
-                    "id": format!("item_2_{}", response_id),
+                    "id": format!("item_2_{response_id}"),
                     "type": "text",
                     "text": "Second input item"
                 }),
             ],
             has_more: false,
-            first_id: Some(format!("item_1_{}", response_id)),
-            last_id: Some(format!("item_2_{}", response_id)),
+            first_id: Some(format!("item_1_{response_id}")),
+            last_id: Some(format!("item_2_{response_id}")),
         })
     }
 }
