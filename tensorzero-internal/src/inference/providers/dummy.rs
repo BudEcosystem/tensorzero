@@ -31,6 +31,10 @@ use crate::moderation::{
     ModerationRequest, ModerationResult,
 };
 use crate::tool::{ToolCall, ToolCallChunk};
+use crate::responses::{
+    OpenAIResponse, OpenAIResponseCreateParams, ResponseError, ResponseInputItemsList,
+    ResponseProvider, ResponseStatus, ResponseStreamEvent, ResponseUsage,
+};
 
 const PROVIDER_NAME: &str = "Dummy";
 const PROVIDER_TYPE: &str = "dummy";
@@ -888,5 +892,269 @@ impl crate::audio::TextToSpeechProvider for DummyProvider {
             },
         };
         Ok(response)
+    }
+}
+
+#[async_trait::async_trait]
+impl ResponseProvider for DummyProvider {
+    async fn create_response(
+        &self,
+        request: &OpenAIResponseCreateParams,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIResponse, Error> {
+        // Generate a dummy response matching the actual OpenAI format
+        let response = OpenAIResponse {
+            id: format!("resp_{}", Uuid::now_v7()),
+            object: "response".to_string(),
+            created_at: current_timestamp() as i64,
+            status: ResponseStatus::Completed,
+            background: Some(false),
+            error: None,
+            incomplete_details: None,
+            instructions: request.instructions.clone(),
+            max_output_tokens: request.max_output_tokens,
+            max_tool_calls: request.max_tool_calls,
+            model: request.model.clone(),
+            output: vec![json!({
+                "id": format!("msg_{}", Uuid::now_v7()),
+                "type": "message",
+                "status": "completed",
+                "content": [{
+                    "type": "output_text",
+                    "annotations": [],
+                    "logprobs": [],
+                    "text": "This is a dummy response from the Dummy provider."
+                }],
+                "role": "assistant"
+            })],
+            parallel_tool_calls: request.parallel_tool_calls,
+            previous_response_id: request.previous_response_id.clone(),
+            reasoning: Some(json!({
+                "effort": null,
+                "summary": null
+            })),
+            service_tier: request.service_tier.clone().or(Some("default".to_string())),
+            store: request.store,
+            temperature: request.temperature.or(Some(0.25)),
+            text: Some(json!({
+                "format": {
+                    "type": "text"
+                }
+            })),
+            tool_choice: request.tool_choice.clone().or(Some(json!("auto"))),
+            tools: request.tools.clone().or(Some(vec![])),
+            top_logprobs: Some(0),
+            top_p: Some(1.0),
+            truncation: Some(json!("disabled")),
+            usage: Some(ResponseUsage {
+                input_tokens: 10,
+                input_tokens_details: Some(json!({
+                    "cached_tokens": 0
+                })),
+                output_tokens: Some(15),
+                output_tokens_details: Some(json!({
+                    "reasoning_tokens": 0
+                })),
+                total_tokens: 25,
+            }),
+            user: request.user.clone(),
+            metadata: request.metadata.clone().or(Some(HashMap::new())),
+        };
+        
+        Ok(response)
+    }
+
+    async fn stream_response(
+        &self,
+        _request: &OpenAIResponseCreateParams,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<
+        Box<dyn futures::Stream<Item = Result<ResponseStreamEvent, Error>> + Send + Unpin>,
+        Error,
+    > {
+        let events = vec![
+            ResponseStreamEvent {
+                event: "response.created".to_string(),
+                data: json!({
+                    "id": format!("resp_{}", Uuid::now_v7()),
+                    "status": "in_progress"
+                }),
+            },
+            ResponseStreamEvent {
+                event: "content_block.start".to_string(),
+                data: json!({
+                    "type": "text",
+                    "text": ""
+                }),
+            },
+            ResponseStreamEvent {
+                event: "content_block.delta".to_string(),
+                data: json!({
+                    "text": "This is a "
+                }),
+            },
+            ResponseStreamEvent {
+                event: "content_block.delta".to_string(),
+                data: json!({
+                    "text": "dummy streaming response."
+                }),
+            },
+            ResponseStreamEvent {
+                event: "content_block.stop".to_string(),
+                data: json!({}),
+            },
+            ResponseStreamEvent {
+                event: "response.done".to_string(),
+                data: json!({
+                    "status": "completed",
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15
+                    }
+                }),
+            },
+        ];
+        
+        // Create a stream without throttle to avoid Unpin issues
+        let stream = tokio_stream::iter(events.into_iter().map(Ok));
+            
+        Ok(Box::new(stream) as Box<dyn futures::Stream<Item = Result<ResponseStreamEvent, Error>> + Send + Unpin>)
+    }
+
+    async fn retrieve_response(
+        &self,
+        response_id: &str,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIResponse, Error> {
+        // Return a dummy response for the given ID
+        Ok(OpenAIResponse {
+            id: response_id.to_string(),
+            object: "response".to_string(),
+            created_at: current_timestamp() as i64,
+            status: ResponseStatus::Completed,
+            background: Some(false),
+            error: None,
+            incomplete_details: None,
+            instructions: Some("You are a helpful assistant.".to_string()),
+            max_output_tokens: Some(1000),
+            max_tool_calls: None,
+            model: "dummy-model".to_string(),
+            output: vec![json!({
+                "type": "text",
+                "text": "This is a retrieved dummy response."
+            })],
+            parallel_tool_calls: None,
+            previous_response_id: None,
+            reasoning: None,
+            service_tier: Some("default".to_string()),
+            store: Some(true),
+            temperature: Some(0.7),
+            text: None,
+            tool_choice: None,
+            tools: None,
+            top_logprobs: None,
+            top_p: None,
+            truncation: None,
+            usage: Some(ResponseUsage {
+                input_tokens: 10,
+                input_tokens_details: None,
+                output_tokens: Some(15),
+                output_tokens_details: None,
+                total_tokens: 25,
+            }),
+            user: None,
+            metadata: Some(HashMap::new()),
+        })
+    }
+
+    async fn delete_response(
+        &self,
+        response_id: &str,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<serde_json::Value, Error> {
+        // Return a success message for deletion
+        Ok(json!({
+            "id": response_id,
+            "object": "response.deleted",
+            "deleted": true
+        }))
+    }
+
+    async fn cancel_response(
+        &self,
+        response_id: &str,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIResponse, Error> {
+        // Return a cancelled response
+        Ok(OpenAIResponse {
+            id: response_id.to_string(),
+            object: "response".to_string(),
+            created_at: current_timestamp() as i64,
+            status: ResponseStatus::Failed,
+            background: Some(false),
+            error: Some(ResponseError {
+                code: "cancelled".to_string(),
+                message: "Response was cancelled".to_string(),
+            }),
+            incomplete_details: None,
+            instructions: Some("You are a helpful assistant.".to_string()),
+            max_output_tokens: Some(1000),
+            max_tool_calls: None,
+            model: "dummy-model".to_string(),
+            output: vec![],
+            parallel_tool_calls: None,
+            previous_response_id: None,
+            reasoning: None,
+            service_tier: Some("default".to_string()),
+            store: Some(true),
+            temperature: Some(0.7),
+            text: None,
+            tool_choice: None,
+            tools: None,
+            top_logprobs: None,
+            top_p: None,
+            truncation: None,
+            usage: Some(ResponseUsage {
+                input_tokens: 10,
+                input_tokens_details: None,
+                output_tokens: Some(0),
+                output_tokens_details: None,
+                total_tokens: 10,
+            }),
+            user: None,
+            metadata: Some(HashMap::new()),
+        })
+    }
+
+    async fn list_response_input_items(
+        &self,
+        response_id: &str,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ResponseInputItemsList, Error> {
+        // Return dummy input items
+        Ok(ResponseInputItemsList {
+            data: vec![
+                json!({
+                    "id": format!("item_1_{}", response_id),
+                    "type": "text",
+                    "text": "First input item"
+                }),
+                json!({
+                    "id": format!("item_2_{}", response_id),
+                    "type": "text", 
+                    "text": "Second input item"
+                }),
+            ],
+            has_more: false,
+            first_id: Some(format!("item_1_{}", response_id)),
+            last_id: Some(format!("item_2_{}", response_id)),
+        })
     }
 }

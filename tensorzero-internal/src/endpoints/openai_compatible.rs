@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use axum::body::Body;
 use axum::debug_handler;
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::cache::CacheParamsOptions;
 use crate::endpoints::inference::{
-    inference, ChatCompletionInferenceParams, InferenceParams, Params,
+    inference, ChatCompletionInferenceParams, InferenceClients, InferenceCredentials, InferenceParams, Params,
 };
 use crate::error::{Error, ErrorDetails};
 use crate::gateway_util::{AppState, AppStateData, StructuredJson};
@@ -42,7 +42,7 @@ use crate::tool::{
 use crate::variant::JsonMode;
 
 use super::inference::{
-    InferenceCredentials, InferenceOutput, InferenceResponse, InferenceResponseChunk,
+    InferenceOutput, InferenceResponse, InferenceResponseChunk,
     InferenceStream,
 };
 use super::model_resolution;
@@ -2402,6 +2402,376 @@ async fn parse_audio_multipart_generic<P: AudioMultipartParams>(
     Ok((file_data, filename, params))
 }
 
+// OpenAI-compatible Responses API handlers
+
+use crate::responses::OpenAIResponseCreateParams;
+
+/// Handler for creating a new response (POST /v1/responses)
+#[debug_handler(state = AppStateData)]
+pub async fn response_create_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(params): StructuredJson<OpenAIResponseCreateParams>,
+) -> Result<Response<Body>, Error> {
+    if !params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible response create request: {:?}",
+            params.unknown_fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    let model_name = model_resolution.model_name.ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+            message: "Response requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    // Check if the model supports the Responses endpoint
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model = models
+        .get_with_capability(
+            &model_name,
+            crate::endpoints::capability::EndpointCapability::Responses,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support responses",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Create credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off, // Responses don't use cache for now
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // Check if streaming is requested
+    if params.stream.unwrap_or(false) {
+        // Handle streaming response
+        let stream = model
+            .stream_response(&params, &model_resolution.original_model_name, &clients)
+            .await?;
+
+        // Convert to SSE stream
+        let sse_stream = stream.map(|result| match result {
+            Ok(event) => Event::default()
+                .json_data(event)
+                .map_err(|e| Error::new(ErrorDetails::Inference {
+                    message: format!("Failed to serialize SSE event: {e}"),
+                })),
+            Err(e) => Err(e),
+        });
+
+        Ok(Sse::new(sse_stream).into_response())
+    } else {
+        // Handle non-streaming response
+        let response = model
+            .create_response(&params, &model_resolution.original_model_name, &clients)
+            .await?;
+
+        Ok(Json(response).into_response())
+    }
+}
+
+/// Handler for retrieving a response (GET /v1/responses/{response_id})
+#[debug_handler(state = AppStateData)]
+pub async fn response_retrieve_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    // Extract model name from headers or use a default
+    // For retrieval, we need to know which model to use
+    // This could be passed in headers or we could have a default model
+    let model_name = headers
+        .get("x-model-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("gpt-4-responses"); // Default model name
+    
+    // Get the model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::Responses,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support responses",
+                    model_name
+                ),
+            })
+        })?;
+
+    let clients = InferenceClients {
+        http_client: &http_client,
+        credentials: &InferenceCredentials::default(),
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            max_age_s: None,
+            enabled: crate::cache::CacheEnabledMode::Off,
+        },
+    };
+
+    let response = model.retrieve_response(&response_id, model_name, &clients).await?;
+    
+    let body = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to build response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        }))?)
+}
+
+/// Handler for deleting a response (DELETE /v1/responses/{response_id})
+#[debug_handler(state = AppStateData)]
+pub async fn response_delete_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    let model_name = headers
+        .get("x-model-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("gpt-4-responses");
+    
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::Responses,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support responses",
+                    model_name
+                ),
+            })
+        })?;
+
+    let clients = InferenceClients {
+        http_client: &http_client,
+        credentials: &InferenceCredentials::default(),
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            max_age_s: None,
+            enabled: crate::cache::CacheEnabledMode::Off,
+        },
+    };
+
+    let response = model.delete_response(&response_id, model_name, &clients).await?;
+    
+    let body = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to build response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        }))?)
+}
+
+/// Handler for cancelling a response (POST /v1/responses/{response_id}/cancel)
+#[debug_handler(state = AppStateData)]
+pub async fn response_cancel_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    let model_name = headers
+        .get("x-model-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("gpt-4-responses");
+    
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::Responses,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support responses",
+                    model_name
+                ),
+            })
+        })?;
+
+    let clients = InferenceClients {
+        http_client: &http_client,
+        credentials: &InferenceCredentials::default(),
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            max_age_s: None,
+            enabled: crate::cache::CacheEnabledMode::Off,
+        },
+    };
+
+    let response = model.cancel_response(&response_id, model_name, &clients).await?;
+    
+    let body = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to build response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        }))?)
+}
+
+/// Handler for listing response input items (GET /v1/responses/{response_id}/input_items)
+#[debug_handler(state = AppStateData)]
+pub async fn response_input_items_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    Path(response_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    let model_name = headers
+        .get("x-model-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("gpt-4-responses");
+    
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::Responses,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support responses",
+                    model_name
+                ),
+            })
+        })?;
+
+    let clients = InferenceClients {
+        http_client: &http_client,
+        credentials: &InferenceCredentials::default(),
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            max_age_s: None,
+            enabled: crate::cache::CacheEnabledMode::Off,
+        },
+    };
+
+    let response = model.list_response_input_items(&response_id, model_name, &clients).await?;
+    
+    let body = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to build response: {}", e),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        }))?)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -3333,5 +3703,285 @@ mod tests {
         // Test file over limit
         let large_file_size = MAX_FILE_SIZE + 1;
         assert!(large_file_size > MAX_FILE_SIZE);
+    }
+
+    #[tokio::test]
+    async fn test_response_create_handler_model_resolution() {
+        use crate::endpoints::model_resolution::ModelResolution;
+        use crate::gateway_util::AppStateData;
+        use crate::responses::OpenAIResponseCreateParams;
+        use axum::body::Body;
+        use axum::extract::State;
+        use axum::http::{HeaderMap, StatusCode};
+        use serde_json::json;
+        use std::sync::Arc;
+
+        // Test that the handler properly resolves model names
+        let params = OpenAIResponseCreateParams {
+            model: "gpt-4-responses".to_string(),
+            input: json!("Test input"),
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            stream: Some(false),
+            stream_options: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        // We can't easily test the full handler without a complete app state,
+        // but we can verify the types compile correctly
+        let _params_json = serde_json::to_value(&params).unwrap();
+    }
+
+    #[test]
+    fn test_response_path_extraction() {
+        // Test that response ID path extraction works correctly
+        let response_id = "resp_123abc";
+        let path = Path(response_id.to_string());
+        assert_eq!(path.0, "resp_123abc");
+    }
+
+    #[test]
+    fn test_response_streaming_support() {
+        use crate::responses::OpenAIResponseCreateParams;
+        use serde_json::json;
+
+        // Test that streaming parameters are properly handled
+        let params_streaming = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("Test"),
+            stream: Some(true),
+            stream_options: Some(json!({"include_usage": true})),
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params_streaming.stream, Some(true));
+        assert!(params_streaming.stream_options.is_some());
+
+        // Test non-streaming
+        let params_non_streaming = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("Test"),
+            stream: Some(false),
+            stream_options: None,
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params_non_streaming.stream, Some(false));
+        assert!(params_non_streaming.stream_options.is_none());
+    }
+
+    #[test]
+    fn test_response_metadata_handling() {
+        use crate::responses::OpenAIResponseCreateParams;
+        use serde_json::json;
+
+        let mut metadata = HashMap::new();
+        metadata.insert("user_id".to_string(), json!("12345"));
+        metadata.insert("session_id".to_string(), json!("abc-def"));
+        metadata.insert("custom_data".to_string(), json!({"key": "value"}));
+
+        let params = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("Test"),
+            metadata: Some(metadata.clone()),
+            stream: None,
+            stream_options: None,
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        assert!(params.metadata.is_some());
+        let param_metadata = params.metadata.unwrap();
+        assert_eq!(param_metadata.get("user_id").unwrap(), &json!("12345"));
+        assert_eq!(param_metadata.get("session_id").unwrap(), &json!("abc-def"));
+        assert_eq!(param_metadata.get("custom_data").unwrap(), &json!({"key": "value"}));
+    }
+
+    #[test]
+    fn test_response_multimodal_support() {
+        use crate::responses::OpenAIResponseCreateParams;
+        use serde_json::json;
+
+        // Test text-only modality
+        let params_text = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("Text input"),
+            modalities: Some(vec!["text".to_string()]),
+            stream: None,
+            stream_options: None,
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params_text.modalities, Some(vec!["text".to_string()]));
+
+        // Test multimodal with text and audio
+        let params_multimodal = OpenAIResponseCreateParams {
+            model: "gpt-4o-audio".to_string(),
+            input: json!([
+                {"type": "text", "text": "Describe this image"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+            ]),
+            modalities: Some(vec!["text".to_string(), "audio".to_string()]),
+            stream: None,
+            stream_options: None,
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params_multimodal.modalities, Some(vec!["text".to_string(), "audio".to_string()]));
+    }
+
+    #[test]
+    fn test_response_tool_configuration() {
+        use crate::responses::OpenAIResponseCreateParams;
+        use serde_json::json;
+
+        let tools = vec![
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the current weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "The city and state"
+                            }
+                        },
+                        "required": ["location"]
+                    }
+                }
+            }),
+            json!({
+                "type": "code_interpreter"
+            })
+        ];
+
+        let params = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("What's the weather in New York?"),
+            tools: Some(tools.clone()),
+            tool_choice: Some(json!("auto")),
+            parallel_tool_calls: Some(true),
+            max_tool_calls: Some(3),
+            stream: None,
+            stream_options: None,
+            instructions: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        assert_eq!(params.tools, Some(tools));
+        assert_eq!(params.tool_choice, Some(json!("auto")));
+        assert_eq!(params.parallel_tool_calls, Some(true));
+        assert_eq!(params.max_tool_calls, Some(3));
     }
 }

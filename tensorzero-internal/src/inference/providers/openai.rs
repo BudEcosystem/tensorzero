@@ -3019,6 +3019,448 @@ struct OpenAIBatchFileResponse {
     body: OpenAIResponse,
 }
 
+use crate::responses::{
+    OpenAIResponse as ResponsesOpenAIResponse, OpenAIResponseCreateParams,
+    ResponseInputItemsList, ResponseProvider, ResponseStreamEvent,
+};
+
+#[async_trait::async_trait]
+impl ResponseProvider for OpenAIProvider {
+    async fn create_response(
+        &self,
+        request: &OpenAIResponseCreateParams,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ResponsesOpenAIResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+        let _start_time = Instant::now();
+        
+        let mut request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json");
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+        
+        let res = request_builder
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to OpenAI Responses API: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+            
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: ResponsesOpenAIResponse = serde_json::from_str(&raw_response).map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing JSON response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                    raw_response: Some(raw_response.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                &serde_json::to_string(&request).unwrap_or_default(),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+
+    async fn stream_response(
+        &self,
+        request: &OpenAIResponseCreateParams,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<
+        Box<dyn futures::Stream<Item = Result<ResponseStreamEvent, Error>> + Send + Unpin>,
+        Error,
+    > {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+        let _start_time = Instant::now();
+        
+        let mut request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json");
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+        
+        // Make sure stream is enabled
+        let mut request_with_stream = request.clone();
+        request_with_stream.stream = Some(true);
+        
+        let event_source = request_builder
+            .json(&request_with_stream)
+            .eventsource()
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: None,
+                    message: format!(
+                        "Error creating event source for OpenAI Responses API: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_with_stream).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+            
+        let inner_stream = async_stream::stream! {
+            futures::pin_mut!(event_source);
+            while let Some(ev) = event_source.next().await {
+                match ev {
+                    Err(e) => {
+                        yield Err(convert_stream_error(PROVIDER_TYPE.to_string(), e).await);
+                    }
+                    Ok(event) => match event {
+                        Event::Open => continue,
+                        Event::Message(message) => {
+                            if message.data == "[DONE]" {
+                                break;
+                            }
+                            
+                            let stream_event: Result<ResponseStreamEvent, Error> =
+                                serde_json::from_str(&message.data).map_err(|e| {
+                                    Error::new(ErrorDetails::InferenceServer {
+                                        message: format!("Error parsing stream event: {e}"),
+                                        raw_request: None,
+                                        raw_response: Some(message.data.clone()),
+                                        provider_type: PROVIDER_TYPE.to_string(),
+                                    })
+                                });
+                                
+                            match stream_event {
+                                Ok(event) => yield Ok(event),
+                                Err(e) => yield Err(e),
+                            }
+                        }
+                    },
+                }
+            }
+        };
+        
+        // Use Box::pin to create a pinned box that implements Stream + Send but not necessarily Unpin
+        // Then convert it to the required type
+        use futures::stream::StreamExt;
+        let pinned_stream = Box::pin(inner_stream);
+        
+        // Convert to a type that implements Unpin
+        struct UnpinStream<S>(Pin<Box<S>>);
+        
+        impl<S: Stream> Stream for UnpinStream<S> {
+            type Item = S::Item;
+            
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Self::Item>> {
+                self.0.as_mut().poll_next(cx)
+            }
+        }
+        
+        // UnpinStream implements Unpin regardless of whether S does
+        impl<S> Unpin for UnpinStream<S> {}
+        
+        let unpin_stream = UnpinStream(pinned_stream);
+        
+        Ok(Box::new(unpin_stream))
+    }
+
+    async fn retrieve_response(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ResponsesOpenAIResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = self.api_base.as_ref()
+            .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
+            .join(&format!("responses/{}", response_id))
+            .map_err(|e| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Failed to construct response URL: {e}"),
+                })
+            })?;
+        
+        let mut request_builder = client.get(url);
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+        
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error retrieving response: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+        
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            let response: ResponsesOpenAIResponse = serde_json::from_str(&raw_response).map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: Some(raw_response.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                "",
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+
+    async fn delete_response(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<serde_json::Value, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = self.api_base.as_ref()
+            .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
+            .join(&format!("responses/{}", response_id))
+            .map_err(|e| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Failed to construct response URL: {e}"),
+                })
+            })?;
+        
+        let mut request_builder = client.delete(url);
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+        
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error deleting response: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+        
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            let response: serde_json::Value = serde_json::from_str(&raw_response).map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: Some(raw_response.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                "",
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+
+    async fn cancel_response(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ResponsesOpenAIResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = self.api_base.as_ref()
+            .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
+            .join(&format!("responses/{}/cancel", response_id))
+            .map_err(|e| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Failed to construct response cancel URL: {e}"),
+                })
+            })?;
+        
+        let mut request_builder = client.post(url);
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+        
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error cancelling response: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+        
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            let response: ResponsesOpenAIResponse = serde_json::from_str(&raw_response).map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: Some(raw_response.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                "",
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+
+    async fn list_response_input_items(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ResponseInputItemsList, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = self.api_base.as_ref()
+            .unwrap_or(&OPENAI_DEFAULT_BASE_URL)
+            .join(&format!("responses/{}/input_items", response_id))
+            .map_err(|e| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Failed to construct response input items URL: {e}"),
+                })
+            })?;
+        
+        let mut request_builder = client.get(url);
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+        
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error listing response input items: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+        
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing text response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            let response: ResponseInputItemsList = serde_json::from_str(&raw_response).map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing JSON response: {}", DisplayOrDebugGateway::new(e)),
+                    raw_request: None,
+                    raw_response: Some(raw_response.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                "",
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Helper function to construct responses API URL
+fn get_responses_url(base_url: &Url) -> Result<Url, Error> {
+    base_url.join("responses").map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to construct responses URL: {e}"),
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -4559,5 +5001,183 @@ mod tests {
         assert!(!result.categories.hate);
         assert_eq!(result.category_scores.harassment, 0.95);
         assert_eq!(result.category_scores.hate, 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_response_provider_url_construction() {
+        use crate::responses::{OpenAIResponseCreateParams, ResponseProvider};
+        use serde_json::json;
+
+        let provider = OpenAIProvider::new(
+            "gpt-4".to_string(),
+            None,
+            None,
+        ).unwrap();
+
+        // Verify the URL construction for responses endpoint
+        let base_url = provider.base_url();
+        let responses_url = base_url.join("responses").unwrap();
+        assert_eq!(responses_url.as_str(), "https://api.openai.com/v1/responses");
+    }
+
+    #[test]
+    fn test_response_request_serialization() {
+        use crate::responses::OpenAIResponseCreateParams;
+        use serde_json::json;
+
+        let params = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("Test input"),
+            instructions: Some("Be helpful".to_string()),
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: Some(0.7),
+            max_output_tokens: Some(1000),
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            stream: Some(false),
+            stream_options: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        // Verify serialization doesn't include None fields
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["model"], "gpt-4");
+        assert_eq!(json["input"], "Test input");
+        assert_eq!(json["instructions"], "Be helpful");
+        assert_eq!(json["temperature"], 0.7);
+        assert_eq!(json["max_output_tokens"], 1000);
+        assert_eq!(json["stream"], false);
+        
+        // Verify None fields are not included
+        assert!(!json.as_object().unwrap().contains_key("tools"));
+        assert!(!json.as_object().unwrap().contains_key("previous_response_id"));
+        assert!(!json.as_object().unwrap().contains_key("reasoning"));
+    }
+
+    #[test]
+    fn test_response_streaming_params() {
+        use crate::responses::OpenAIResponseCreateParams;
+        use serde_json::json;
+
+        let params = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("Test"),
+            stream: Some(true),
+            stream_options: Some(json!({
+                "include_usage": true
+            })),
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["stream"], true);
+        assert_eq!(json["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn test_response_multimodal_input() {
+        use crate::responses::OpenAIResponseCreateParams;
+        use serde_json::json;
+
+        // Test text input
+        let text_params = OpenAIResponseCreateParams {
+            model: "gpt-4".to_string(),
+            input: json!("Simple text input"),
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            stream: None,
+            stream_options: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            modalities: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        let json = serde_json::to_value(&text_params).unwrap();
+        assert_eq!(json["input"], "Simple text input");
+
+        // Test array input with multimodal content
+        let multimodal_params = OpenAIResponseCreateParams {
+            model: "gpt-4o".to_string(),
+            input: json!([
+                {
+                    "type": "text",
+                    "text": "What's in this image?"
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,iVBORw0KGgoAAAANS..."
+                    }
+                }
+            ]),
+            modalities: Some(vec!["text".to_string(), "image".to_string()]),
+            instructions: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            max_tool_calls: None,
+            previous_response_id: None,
+            temperature: None,
+            max_output_tokens: None,
+            response_format: None,
+            reasoning: None,
+            include: None,
+            metadata: None,
+            stream: None,
+            stream_options: None,
+            store: None,
+            background: None,
+            service_tier: None,
+            user: None,
+            unknown_fields: HashMap::new(),
+        };
+
+        let json = serde_json::to_value(&multimodal_params).unwrap();
+        assert!(json["input"].is_array());
+        assert_eq!(json["input"][0]["type"], "text");
+        assert_eq!(json["input"][1]["type"], "image_url");
+        assert_eq!(json["modalities"][0], "text");
+        assert_eq!(json["modalities"][1], "image");
     }
 }
