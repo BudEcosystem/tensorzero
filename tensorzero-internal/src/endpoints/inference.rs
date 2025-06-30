@@ -1258,6 +1258,16 @@ pub struct ChatCompletionInferenceParams {
     pub json_mode: Option<JsonMode>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub logprobs: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_logprobs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub n: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logit_bias: Option<HashMap<String, f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 }
 
 impl ChatCompletionInferenceParams {

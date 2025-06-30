@@ -444,6 +444,16 @@ pub struct ModelInferenceRequest<'a> {
     pub guided_decoding_backend: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guided_whitespace_pattern: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_logprobs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<Cow<'a, str>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub n: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logit_bias: Option<HashMap<String, f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 }
 
 // Helper used by serde to omit the field when false

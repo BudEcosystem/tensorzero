@@ -320,6 +320,24 @@ struct OpenAICompatibleStreamOptions {
     include_usage: bool,
 }
 
+/// Helper type for parameters that can be either a single string or an array of strings
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+enum StringOrVec {
+    String(String),
+    Vec(Vec<String>),
+}
+
+impl StringOrVec {
+    /// Convert to a Vec<String> for uniform handling
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            StringOrVec::String(s) => vec![s],
+            StringOrVec::Vec(v) => v,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Default)]
 pub struct OpenAICompatibleParams {
     messages: Vec<OpenAICompatibleMessage>,
@@ -339,6 +357,16 @@ pub struct OpenAICompatibleParams {
     parallel_tool_calls: Option<bool>,
     /// If set to `true`, the response should include per-token log-probabilities.
     logprobs: Option<bool>,
+    /// Number of most likely tokens to return at each token position, with log probability.
+    top_logprobs: Option<u32>,
+    /// Up to 4 sequences where the API will stop generating further tokens.
+    stop: Option<StringOrVec>,
+    /// How many chat completion choices to generate for each input message.
+    n: Option<u32>,
+    /// Modify the likelihood of specified tokens appearing in the completion.
+    logit_bias: Option<HashMap<String, f32>>,
+    /// A unique identifier representing your end-user.
+    user: Option<String>,
     // Guided decoding / template fields (TensorZero extensions)
     chat_template: Option<String>,
     chat_template_kwargs: Option<Value>,
@@ -558,6 +586,56 @@ impl Params {
             Some(OpenAICompatibleResponseFormat::Text) => Some(JsonMode::Off),
             None => None,
         };
+
+        // Validate new parameters
+        if let Some(n) = openai_compatible_params.n {
+            if n == 0 {
+                return Err(ErrorDetails::InvalidOpenAICompatibleRequest {
+                    message: "n must be greater than 0".to_string(),
+                }
+                .into());
+            }
+            if n > 1 {
+                // For now, we only support n=1. In the future, we can implement multiple completions.
+                return Err(ErrorDetails::InvalidOpenAICompatibleRequest {
+                    message: "n > 1 is not yet supported. Please use n=1 or omit the parameter."
+                        .to_string(),
+                }
+                .into());
+            }
+        }
+
+        if let Some(top_logprobs) = openai_compatible_params.top_logprobs {
+            if top_logprobs > 20 {
+                return Err(ErrorDetails::InvalidOpenAICompatibleRequest {
+                    message: "top_logprobs must be between 0 and 20".to_string(),
+                }
+                .into());
+            }
+        }
+
+        if let Some(ref logit_bias) = openai_compatible_params.logit_bias {
+            // Validate that all keys are valid token IDs (integers as strings)
+            for (key, value) in logit_bias {
+                if key.parse::<u32>().is_err() {
+                    return Err(ErrorDetails::InvalidOpenAICompatibleRequest {
+                        message: format!(
+                            "Invalid token ID in logit_bias: '{key}'. Token IDs must be integers."
+                        ),
+                    }
+                    .into());
+                }
+                if !(-100.0..=100.0).contains(value) {
+                    return Err(ErrorDetails::InvalidOpenAICompatibleRequest {
+                        message: format!(
+                            "logit_bias values must be between -100 and 100, got {value}"
+                        ),
+                    }
+                    .into());
+                }
+            }
+        }
+
         let input = openai_compatible_params.messages.try_into()?;
         let chat_completion_inference_params = ChatCompletionInferenceParams {
             temperature: openai_compatible_params.temperature,
@@ -578,6 +656,11 @@ impl Params {
             guided_whitespace_pattern: openai_compatible_params.guided_whitespace_pattern,
             json_mode,
             logprobs: matches!(openai_compatible_params.logprobs, Some(true)),
+            top_logprobs: openai_compatible_params.top_logprobs,
+            stop: openai_compatible_params.stop.map(|s| s.into_vec()),
+            n: openai_compatible_params.n,
+            logit_bias: openai_compatible_params.logit_bias,
+            user: openai_compatible_params.user,
         };
         let inference_params = InferenceParams {
             chat_completion: chat_completion_inference_params,

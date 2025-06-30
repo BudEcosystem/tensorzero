@@ -533,6 +533,16 @@ where
                 extra_headers,
                 extra_cache_key: inference_config.extra_cache_key.clone(),
                 logprobs: inference_params.chat_completion.logprobs,
+                top_logprobs: inference_params.chat_completion.top_logprobs,
+                stop: inference_params.chat_completion.stop.as_ref().map(|stops| {
+                    stops
+                        .iter()
+                        .map(|s| Cow::Borrowed(s.as_str()))
+                        .collect::<Vec<Cow<'_, str>>>()
+                }),
+                n: inference_params.chat_completion.n,
+                logit_bias: inference_params.chat_completion.logit_bias.clone(),
+                user: inference_params.chat_completion.user.clone(),
             }
         }
         FunctionConfig::Json(json_config) => {
@@ -600,6 +610,16 @@ where
                 extra_headers,
                 extra_cache_key: inference_config.extra_cache_key.clone(),
                 logprobs: inference_params.chat_completion.logprobs,
+                top_logprobs: inference_params.chat_completion.top_logprobs,
+                stop: inference_params.chat_completion.stop.as_ref().map(|stops| {
+                    stops
+                        .iter()
+                        .map(|s| Cow::Borrowed(s.as_str()))
+                        .collect::<Vec<Cow<'_, str>>>()
+                }),
+                n: inference_params.chat_completion.n,
+                logit_bias: inference_params.chat_completion.logit_bias.clone(),
+                user: inference_params.chat_completion.user.clone(),
             }
         }
     })

@@ -8,6 +8,7 @@ use serde::de::IntoDeserializer;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::io::Write;
 use std::pin::Pin;
 use std::sync::OnceLock;
@@ -2193,9 +2194,8 @@ pub(super) struct StreamOptions {
 /// This struct defines the supported parameters for the OpenAI API
 /// See the [OpenAI API documentation](https://platform.openai.com/docs/api-reference/chat/create)
 /// for more details.
-/// We are not handling logprobs, top_logprobs, n,
-/// presence_penalty, seed, service_tier, stop, user,
-/// or the deprecated function_call and functions arguments.
+/// Note: n > 1 is not yet fully supported by TensorZero.
+/// Legacy parameters function_call and functions are not supported.
 #[derive(Debug, Serialize)]
 struct OpenAIRequest<'a> {
     messages: Vec<OpenAIRequestMessage<'a>>,
@@ -2223,6 +2223,18 @@ struct OpenAIRequest<'a> {
     tool_choice: Option<OpenAIToolChoice<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logprobs: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_logprobs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<&'a str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    n: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logit_bias: Option<HashMap<String, f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<&'a str>,
 }
 
 impl<'a> OpenAIRequest<'a> {
@@ -2273,6 +2285,15 @@ impl<'a> OpenAIRequest<'a> {
             tools,
             tool_choice,
             parallel_tool_calls,
+            logprobs: if request.logprobs { Some(true) } else { None },
+            top_logprobs: request.top_logprobs,
+            stop: request
+                .stop
+                .as_ref()
+                .map(|stops| stops.iter().map(|s| s.as_ref()).collect()),
+            n: request.n,
+            logit_bias: request.logit_bias.clone(),
+            user: request.user.as_deref(),
         })
     }
 }
@@ -3972,6 +3993,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let raw_request = serde_json::to_string(&request_body).unwrap();
         let raw_response = "test_response".to_string();
@@ -4070,6 +4097,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let raw_request = serde_json::to_string(&request_body).unwrap();
         let result = ProviderInferenceResponse::try_from(OpenAIResponseWithMetadata {
@@ -4137,6 +4170,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let result = ProviderInferenceResponse::try_from(OpenAIResponseWithMetadata {
             response: invalid_response_no_choices,
@@ -4196,6 +4235,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let result = ProviderInferenceResponse::try_from(OpenAIResponseWithMetadata {
             response: invalid_response_multiple_choices,
@@ -5228,5 +5273,68 @@ mod tests {
         assert_eq!(json["input"][1]["type"], "image_url");
         assert_eq!(json["modalities"][0], "text");
         assert_eq!(json["modalities"][1], "image");
+    #[test]
+    fn test_openai_request_new_parameters() {
+        // Test request with new parameters
+        let logit_bias = HashMap::from([("123".to_string(), 50.0), ("456".to_string(), -100.0)]);
+
+        let request_with_new_params = ModelInferenceRequest {
+            inference_id: Uuid::now_v7(),
+            messages: vec![RequestMessage {
+                role: Role::User,
+                content: vec!["Generate text".to_string().into()],
+            }],
+            system: Some("You are a helpful assistant".to_string()),
+            tool_config: None,
+            temperature: Some(0.8),
+            max_tokens: Some(150),
+            seed: Some(42),
+            top_p: Some(0.95),
+            presence_penalty: Some(0.0),
+            frequency_penalty: Some(0.0),
+            stream: false,
+            json_mode: ModelInferenceRequestJsonMode::Off,
+            function_type: FunctionType::Chat,
+            output_schema: None,
+            logprobs: true,
+            top_logprobs: Some(5),
+            stop: Some(vec![Cow::Borrowed("END"), Cow::Borrowed("STOP")]),
+            n: Some(1),
+            logit_bias: Some(logit_bias.clone()),
+            user: Some("test-user-123".to_string()),
+            extra_body: Default::default(),
+            extra_headers: Default::default(),
+            extra_cache_key: None,
+            chat_template: None,
+            chat_template_kwargs: None,
+            mm_processor_kwargs: None,
+            guided_json: None,
+            guided_regex: None,
+            guided_choice: None,
+            guided_grammar: None,
+            structural_tag: None,
+            guided_decoding_backend: None,
+            guided_whitespace_pattern: None,
+        };
+
+        let openai_request = OpenAIRequest::new("gpt-4", &request_with_new_params).unwrap();
+
+        // Verify all new parameters are correctly set
+        assert_eq!(openai_request.model, "gpt-4");
+        assert_eq!(openai_request.logprobs, Some(true));
+        assert_eq!(openai_request.top_logprobs, Some(5));
+        assert_eq!(openai_request.stop, Some(vec!["END", "STOP"]));
+        assert_eq!(openai_request.n, Some(1));
+        assert_eq!(openai_request.logit_bias, Some(logit_bias));
+        assert_eq!(openai_request.user, Some("test-user-123"));
+
+        // Test that logprobs is None when false
+        let request_no_logprobs = ModelInferenceRequest {
+            logprobs: false,
+            ..request_with_new_params.clone()
+        };
+
+        let openai_request_no_logprobs = OpenAIRequest::new("gpt-4", &request_no_logprobs).unwrap();
+        assert_eq!(openai_request_no_logprobs.logprobs, None);
     }
 }
