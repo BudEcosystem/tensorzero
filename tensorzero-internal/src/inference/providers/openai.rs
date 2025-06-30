@@ -3505,6 +3505,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let raw_request = serde_json::to_string(&request_body).unwrap();
         let raw_response = "test_response".to_string();
@@ -3603,6 +3609,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let raw_request = serde_json::to_string(&request_body).unwrap();
         let result = ProviderInferenceResponse::try_from(OpenAIResponseWithMetadata {
@@ -3670,6 +3682,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let result = ProviderInferenceResponse::try_from(OpenAIResponseWithMetadata {
             response: invalid_response_no_choices,
@@ -3729,6 +3747,12 @@ mod tests {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            logprobs: None,
+            top_logprobs: None,
+            stop: None,
+            n: None,
+            logit_bias: None,
+            user: None,
         };
         let result = ProviderInferenceResponse::try_from(OpenAIResponseWithMetadata {
             response: invalid_response_multiple_choices,
