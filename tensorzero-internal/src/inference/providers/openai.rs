@@ -4585,11 +4585,8 @@ mod tests {
     #[test]
     fn test_openai_request_new_parameters() {
         // Test request with new parameters
-        let logit_bias = HashMap::from([
-            ("123".to_string(), 50.0),
-            ("456".to_string(), -100.0),
-        ]);
-        
+        let logit_bias = HashMap::from([("123".to_string(), 50.0), ("456".to_string(), -100.0)]);
+
         let request_with_new_params = ModelInferenceRequest {
             inference_id: Uuid::now_v7(),
             messages: vec![RequestMessage {
@@ -4639,13 +4636,13 @@ mod tests {
         assert_eq!(openai_request.n, Some(1));
         assert_eq!(openai_request.logit_bias, Some(logit_bias));
         assert_eq!(openai_request.user, Some("test-user-123"));
-        
+
         // Test that logprobs is None when false
         let request_no_logprobs = ModelInferenceRequest {
             logprobs: false,
             ..request_with_new_params.clone()
         };
-        
+
         let openai_request_no_logprobs = OpenAIRequest::new("gpt-4", &request_no_logprobs).unwrap();
         assert_eq!(openai_request_no_logprobs.logprobs, None);
     }
