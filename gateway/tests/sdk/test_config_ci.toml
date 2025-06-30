@@ -5,6 +5,9 @@ debug = true
 [gateway.authentication]
 enabled = false
 
+[gateway.observability]
+enabled = false
+
 [models."gpt-3.5-turbo"]
 routing = ["mock"]
 endpoints = ["chat"]
