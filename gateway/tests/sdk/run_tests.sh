@@ -13,14 +13,19 @@ NC='\033[0m' # No Color
 echo -e "${YELLOW}TensorZero OpenAI Integration Tests${NC}"
 echo "===================================="
 
-# Check if virtual environment exists
-if [ ! -d ".venv" ]; then
+# Check if virtual environment exists (support both .venv and venv)
+if [ -d ".venv" ]; then
+    VENV_DIR=".venv"
+elif [ -d "venv" ]; then
+    VENV_DIR="venv"
+else
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv .venv
+    VENV_DIR=".venv"
 fi
 
 # Activate virtual environment
-source .venv/bin/activate
+source ${VENV_DIR}/bin/activate
 
 # Install dependencies
 echo -e "${YELLOW}Installing dependencies...${NC}"
@@ -40,7 +45,7 @@ export $(cat .env | grep -v '^#' | xargs)
 echo -e "${YELLOW}Checking TensorZero gateway...${NC}"
 if ! curl -s -f "${TENSORZERO_BASE_URL:-http://localhost:3000}/health" > /dev/null 2>&1; then
     echo -e "${RED}Error: TensorZero gateway is not running!${NC}"
-    echo "Please start TensorZero with: cargo run --bin gateway -- --config-file integration_tests/test_config.toml"
+    echo "Please start TensorZero with: cargo run --bin gateway -- --config-file gateway/tests/integration_tests/test_config.toml"
     exit 1
 fi
 echo -e "${GREEN}✓ TensorZero gateway is running${NC}"

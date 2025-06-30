@@ -6,7 +6,7 @@ This directory contains integration tests that validate TensorZero's OpenAI-comp
 
 1. **Install Dependencies**
    ```bash
-   cd integration_tests
+   cd gateway/tests/integration_tests
    python3 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
@@ -21,7 +21,7 @@ This directory contains integration tests that validate TensorZero's OpenAI-comp
 3. **Start TensorZero Gateway**
    ```bash
    # From the repository root
-   cargo run --bin gateway -- --config-file integration_tests/test_config.toml
+   cargo run --bin gateway -- --config-file gateway/tests/integration_tests/test_config.toml
    ```
 
 ## Running Tests
@@ -124,8 +124,8 @@ cd fixtures/audio_samples
 These tests can be integrated into CI/CD pipelines:
 ```yaml
 - name: Start TensorZero
-  run: cargo run --bin gateway -- --config-file integration_tests/test_config.toml &
+  run: cargo run --bin gateway -- --config-file gateway/tests/integration_tests/test_config.toml &
   
 - name: Run Integration Tests
-  run: cd integration_tests && ./run_tests.sh
+  run: cd gateway/tests/integration_tests && ./run_tests.sh
 ```
