@@ -315,15 +315,37 @@ jobs:
       - name: Create .env file for SDK tests
         run: |
           cd gateway/tests/sdk
-          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > .env
-          echo "TENSORZERO_BASE_URL=http://localhost:3001" >> .env
+          echo "TENSORZERO_BASE_URL=http://localhost:3001" > .env
           
-      - name: Build the gateway for SDK tests
-        run: cargo build --release --bin gateway
+      - name: Build the gateway and mock provider for SDK tests
+        run: |
+          cargo build --release --bin gateway
+          cargo build --release --package mock-inference-provider --bin mock-inference-provider
+          
+      - name: Launch the mock inference provider
+        run: |
+          cargo run --release --package mock-inference-provider --bin mock-inference-provider > mock_provider_logs.txt 2>&1 &
+          MOCK_PROVIDER_PID=$!
+          echo "MOCK_PROVIDER_PID=$MOCK_PROVIDER_PID" >> $GITHUB_ENV
+          
+          # Wait for mock provider to be ready
+          count=0
+          max_attempts=10
+          while ! curl -s -f http://localhost:3030/status >/dev/null 2>&1; do
+            echo "Waiting for mock provider to be ready..."
+            sleep 1
+            count=$((count + 1))
+            if [ $count -ge $max_attempts ]; then
+              echo "Mock provider failed to start after $max_attempts attempts"
+              cat mock_provider_logs.txt
+              exit 1
+            fi
+          done
+          echo "Mock inference provider is ready"
         
       - name: Launch the gateway for SDK tests
         run: |
-          cargo run --release --bin gateway -- --config-file gateway/tests/sdk/test_config.toml > sdk_gateway_logs.txt 2>&1 &
+          cargo run --release --bin gateway -- --config-file gateway/tests/sdk/test_config_ci.toml > sdk_gateway_logs.txt 2>&1 &
           GATEWAY_PID=$!
           echo "GATEWAY_PID=$GATEWAY_PID" >> $GITHUB_ENV
           
@@ -354,11 +376,18 @@ jobs:
         if: always()
         run: cat sdk_gateway_logs.txt
         
-      - name: Cleanup gateway process
+      - name: Print mock provider logs
+        if: always()
+        run: cat mock_provider_logs.txt
+        
+      - name: Cleanup processes
         if: always()
         run: |
           if [ ! -z "$GATEWAY_PID" ]; then
             kill $GATEWAY_PID || true
+          fi
+          if [ ! -z "$MOCK_PROVIDER_PID" ]; then
+            kill $MOCK_PROVIDER_PID || true
           fi
 
   performance-test:
