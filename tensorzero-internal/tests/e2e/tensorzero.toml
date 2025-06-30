@@ -494,6 +494,14 @@ endpoints = ["chat"]
 type = "dummy"
 model_name = "good"
 
+[models."dummy-responses"]
+routing = ["dummy-responses"]
+endpoints = ["responses"]
+
+[models."dummy-responses".providers.dummy-responses]
+type = "dummy"
+model_name = "dummy-responses"
+
 [models.error]
 routing = ["error"]
 endpoints = ["chat"]

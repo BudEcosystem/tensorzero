@@ -22,6 +22,7 @@ pub mod model_table;
 pub mod moderation; // moderation API
 pub mod observability; // utilities for observability (logs, metrics, etc.)
 pub mod redis_client; // redis client
+pub mod responses; // OpenAI-compatible Responses API
 mod testing;
 pub mod tool; // types and methods for working with TensorZero tools
 mod uuid_util; // utilities for working with UUIDs

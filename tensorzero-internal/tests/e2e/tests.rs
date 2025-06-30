@@ -23,5 +23,6 @@ mod prometheus;
 mod providers;
 mod proxy;
 mod render_inferences;
+mod responses;
 mod retries;
 mod streaming_errors;
