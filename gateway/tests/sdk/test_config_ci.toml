@@ -8,82 +8,70 @@ enabled = false
 [gateway.observability]
 enabled = false
 
+# Chat models using dummy provider
 [models."gpt-3.5-turbo"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["chat"]
 
-[models."gpt-3.5-turbo".providers.mock]
-type = "openai"
-model_name = "gpt-3.5-turbo"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."gpt-3.5-turbo".providers.dummy]
+type = "dummy"
+model_name = "json"  # Returns JSON responses
 
 [models."gpt-4"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["chat"]
 
-[models."gpt-4".providers.mock]
-type = "openai"
-model_name = "gpt-4"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."gpt-4".providers.dummy]
+type = "dummy"
+model_name = "test"  # Returns default chat responses
 
+# Embedding models using dummy provider
 [models."text-embedding-ada-002"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["embedding"]
 
-[models."text-embedding-ada-002".providers.mock]
-type = "openai"
-model_name = "text-embedding-ada-002"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."text-embedding-ada-002".providers.dummy]
+type = "dummy"
+model_name = "embed"
 
 [models."text-embedding-3-small"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["embedding"]
 
-[models."text-embedding-3-small".providers.mock]
-type = "openai"
-model_name = "text-embedding-3-small"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."text-embedding-3-small".providers.dummy]
+type = "dummy"
+model_name = "embed"
 
+# Moderation model using dummy provider
 [models."omni-moderation-latest"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["moderation"]
 
-[models."omni-moderation-latest".providers.mock]
-type = "openai"
-model_name = "omni-moderation-latest"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."omni-moderation-latest".providers.dummy]
+type = "dummy"
+model_name = "moderate"
 
+# Audio models using dummy provider
 [models."whisper-1"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["audio_transcription", "audio_translation"]
 
-[models."whisper-1".providers.mock]
-type = "openai"
-model_name = "whisper-1"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."whisper-1".providers.dummy]
+type = "dummy"
+model_name = "whisper"
 
 [models."tts-1"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["text_to_speech"]
 
-[models."tts-1".providers.mock]
-type = "openai"
-model_name = "tts-1"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."tts-1".providers.dummy]
+type = "dummy"
+model_name = "tts"
 
 [models."tts-1-hd"]
-routing = ["mock"]
+routing = ["dummy"]
 endpoints = ["text_to_speech"]
 
-[models."tts-1-hd".providers.mock]
-type = "openai"
-model_name = "tts-1-hd"
-api_base = "http://localhost:3030/openai/"
-api_key_location = "none"
+[models."tts-1-hd".providers.dummy]
+type = "dummy"
+model_name = "tts"

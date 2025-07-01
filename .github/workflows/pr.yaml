@@ -318,31 +318,8 @@ jobs:
           echo "TENSORZERO_BASE_URL=http://localhost:3001" > .env
           echo "OPENAI_API_KEY=dummy-key-for-testing" >> .env
           
-      - name: Build the gateway and mock provider for SDK tests
-        run: |
-          cargo build --release --bin gateway
-          cargo build --release --package mock-inference-provider --bin mock-inference-provider
-          
-      - name: Launch the mock inference provider
-        run: |
-          cargo run --release --package mock-inference-provider --bin mock-inference-provider > mock_provider_logs.txt 2>&1 &
-          MOCK_PROVIDER_PID=$!
-          echo "MOCK_PROVIDER_PID=$MOCK_PROVIDER_PID" >> $GITHUB_ENV
-          
-          # Wait for mock provider to be ready
-          count=0
-          max_attempts=10
-          while ! curl -s -f http://localhost:3030/status >/dev/null 2>&1; do
-            echo "Waiting for mock provider to be ready..."
-            sleep 1
-            count=$((count + 1))
-            if [ $count -ge $max_attempts ]; then
-              echo "Mock provider failed to start after $max_attempts attempts"
-              cat mock_provider_logs.txt
-              exit 1
-            fi
-          done
-          echo "Mock inference provider is ready"
+      - name: Build the gateway for SDK tests
+        run: cargo build --release --bin gateway
         
       - name: Launch the gateway for SDK tests
         run: |
@@ -371,24 +348,18 @@ jobs:
           python3 -m venv .venv
           source .venv/bin/activate
           pip install -r requirements.txt
-          pytest -v test_chat.py test_embeddings.py test_moderation.py test_audio.py -k "not compare_with_openai"
+          # Run CI-specific tests designed for the dummy provider
+          pytest -v test_ci_basic.py
           
       - name: Print gateway logs
         if: always()
         run: cat sdk_gateway_logs.txt
         
-      - name: Print mock provider logs
-        if: always()
-        run: cat mock_provider_logs.txt
-        
-      - name: Cleanup processes
+      - name: Cleanup gateway process
         if: always()
         run: |
           if [ ! -z "$GATEWAY_PID" ]; then
             kill $GATEWAY_PID || true
-          fi
-          if [ ! -z "$MOCK_PROVIDER_PID" ]; then
-            kill $MOCK_PROVIDER_PID || true
           fi
 
   performance-test:
