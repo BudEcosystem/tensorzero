@@ -9,6 +9,7 @@ import os
 import pytest
 import tempfile
 import base64
+import subprocess
 from pathlib import Path
 from PIL import Image
 import io
@@ -45,7 +46,11 @@ def setup_module():
     """Setup test images before running tests."""
     if not FIXTURES_DIR.exists():
         print("Creating test images...")
-        os.system(f"cd {Path(__file__).parent} && python create_test_images.py")
+        subprocess.run(
+            ["python", "create_test_images.py"],
+            cwd=Path(__file__).parent,
+            check=True
+        )
 
 
 class TestImageGeneration:

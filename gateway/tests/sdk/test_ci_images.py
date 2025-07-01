@@ -6,6 +6,7 @@ These tests don't require real OpenAI API keys and can run in CI environments.
 import os
 import pytest
 import base64
+import subprocess
 from pathlib import Path
 from PIL import Image
 import io
@@ -32,7 +33,11 @@ TEST_IMAGE_PATH = FIXTURES_DIR / "test_image.png"
 def setup_module():
     """Setup test images before running tests."""
     if not FIXTURES_DIR.exists():
-        os.system(f"cd {Path(__file__).parent} && python create_test_images.py")
+        subprocess.run(
+            ["python", "create_test_images.py"],
+            cwd=Path(__file__).parent,
+            check=True
+        )
 
 
 class TestImageGenerationCI:
