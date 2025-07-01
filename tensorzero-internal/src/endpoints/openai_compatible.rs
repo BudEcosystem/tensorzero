@@ -53,9 +53,7 @@ use crate::audio::{
 };
 use crate::embeddings::EmbeddingRequest;
 use crate::moderation::ModerationProvider;
-use crate::realtime::{
-    RealtimeSessionRequest, RealtimeTranscriptionRequest,
-};
+use crate::realtime::{RealtimeSessionRequest, RealtimeTranscriptionRequest};
 use std::sync::Arc;
 
 /// A handler for the OpenAI-compatible inference endpoint
@@ -2411,8 +2409,8 @@ pub async fn realtime_session_handler(
 
     // Create credentials
     let credentials = InferenceCredentials::default();
-    
-    // Create inference clients 
+
+    // Create inference clients
     let clients = super::inference::InferenceClients {
         http_client: &http_client,
         credentials: &credentials,
@@ -2425,11 +2423,7 @@ pub async fn realtime_session_handler(
 
     // Call the model's realtime session capability
     let response = model
-        .create_realtime_session(
-            &params,
-            &model_resolution.original_model_name,
-            &clients,
-        )
+        .create_realtime_session(&params, &model_resolution.original_model_name, &clients)
         .await?;
 
     let json_response = serde_json::to_string(&response).map_err(|e| {
@@ -2477,7 +2471,8 @@ pub async fn realtime_transcription_session_handler(
     let models = config.models.read().await;
     let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
         Error::new(ErrorDetails::InvalidRequest {
-            message: "Realtime transcription requests must specify a model, not a function".to_string(),
+            message: "Realtime transcription requests must specify a model, not a function"
+                .to_string(),
         })
     })?;
 
@@ -2498,7 +2493,7 @@ pub async fn realtime_transcription_session_handler(
 
     // Create credentials
     let credentials = InferenceCredentials::default();
-    
+
     // Create inference clients
     let clients = super::inference::InferenceClients {
         http_client: &http_client,

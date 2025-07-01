@@ -3040,13 +3040,13 @@ struct OpenAIBatchFileResponse {
     body: OpenAIResponse,
 }
 
-use crate::responses::{
-    OpenAIResponse as ResponsesOpenAIResponse, OpenAIResponseCreateParams, ResponseInputItemsList,
-    ResponseProvider, ResponseStreamEvent,
-};
 use crate::realtime::{
     RealtimeSessionProvider, RealtimeSessionRequest, RealtimeSessionResponse,
     RealtimeTranscriptionProvider, RealtimeTranscriptionRequest, RealtimeTranscriptionResponse,
+};
+use crate::responses::{
+    OpenAIResponse as ResponsesOpenAIResponse, OpenAIResponseCreateParams, ResponseInputItemsList,
+    ResponseProvider, ResponseStreamEvent,
 };
 
 #[async_trait::async_trait]
@@ -3542,11 +3542,13 @@ fn get_realtime_sessions_url(base_url: &Url) -> Result<Url, Error> {
 
 // Helper function to construct realtime transcription sessions API URL
 fn get_realtime_transcription_sessions_url(base_url: &Url) -> Result<Url, Error> {
-    base_url.join("realtime/transcription_sessions").map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to construct realtime transcription sessions URL: {e}"),
+    base_url
+        .join("realtime/transcription_sessions")
+        .map_err(|e| {
+            Error::new(ErrorDetails::Config {
+                message: format!("Failed to construct realtime transcription sessions URL: {e}"),
+            })
         })
-    })
 }
 
 #[async_trait::async_trait]
@@ -3558,14 +3560,13 @@ impl RealtimeSessionProvider for OpenAIProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<RealtimeSessionResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let request_url = get_realtime_sessions_url(
-            self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL)
-        )?;
+        let request_url =
+            get_realtime_sessions_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
 
         let mut request_builder = client
             .post(request_url)
             .header("Content-Type", "application/json");
-        
+
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
@@ -3596,17 +3597,18 @@ impl RealtimeSessionProvider for OpenAIProvider {
                 })
             })?;
 
-            let response: RealtimeSessionResponse = serde_json::from_str(&raw_response).map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!(
-                        "Error parsing JSON response: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
-                    raw_response: Some(raw_response.clone()),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
+            let response: RealtimeSessionResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
 
             Ok(response)
         } else {
@@ -3640,13 +3642,13 @@ impl RealtimeTranscriptionProvider for OpenAIProvider {
     ) -> Result<RealtimeTranscriptionResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
         let request_url = get_realtime_transcription_sessions_url(
-            self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL)
+            self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL),
         )?;
 
         let mut request_builder = client
             .post(request_url)
             .header("Content-Type", "application/json");
-        
+
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
@@ -3677,17 +3679,18 @@ impl RealtimeTranscriptionProvider for OpenAIProvider {
                 })
             })?;
 
-            let response: RealtimeTranscriptionResponse = serde_json::from_str(&raw_response).map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!(
-                        "Error parsing JSON response: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
-                    raw_response: Some(raw_response.clone()),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
+            let response: RealtimeTranscriptionResponse = serde_json::from_str(&raw_response)
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
 
             Ok(response)
         } else {

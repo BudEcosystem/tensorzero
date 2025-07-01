@@ -354,7 +354,9 @@ impl ModelConfig {
         // Verify this model supports realtime transcription
         if !self.supports_endpoint(EndpointCapability::RealtimeTranscription) {
             return Err(Error::new(ErrorDetails::CapabilityNotSupported {
-                capability: EndpointCapability::RealtimeTranscription.as_str().to_string(),
+                capability: EndpointCapability::RealtimeTranscription
+                    .as_str()
+                    .to_string(),
                 provider: model_name.to_string(),
             }));
         }
@@ -368,7 +370,11 @@ impl ModelConfig {
             })?;
 
             let response = provider
-                .create_realtime_transcription_session(request, clients.http_client, clients.credentials)
+                .create_realtime_transcription_session(
+                    request,
+                    clients.http_client,
+                    clients.credentials,
+                )
                 .await;
             match response {
                 Ok(response) => {
@@ -2132,7 +2138,9 @@ impl ModelProvider {
             }
             // Other providers don't support realtime transcription yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
-                capability: EndpointCapability::RealtimeTranscription.as_str().to_string(),
+                capability: EndpointCapability::RealtimeTranscription
+                    .as_str()
+                    .to_string(),
                 provider: self.name.to_string(),
             })),
         }

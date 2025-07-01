@@ -2,7 +2,7 @@ use crate::endpoints::inference::InferenceCredentials;
 use crate::error::Error;
 use crate::inference::types::{current_timestamp, Latency, Usage};
 use crate::tool::Tool;
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -219,9 +219,9 @@ impl SessionManager {
         let session_id = format!("sess_{}", Uuid::now_v7().to_string().replace('-', ""));
         let now = current_timestamp() as i64;
         let expires_at = now + 60; // 1 minute expiration
-        
+
         let client_secret = generate_ephemeral_token(&session_type);
-        
+
         let session_data = SessionData {
             id: session_id.clone(),
             session_type,
@@ -231,7 +231,8 @@ impl SessionManager {
             created_at: now,
         };
 
-        self.active_sessions.insert(session_id, session_data.clone());
+        self.active_sessions
+            .insert(session_id, session_data.clone());
         session_data
     }
 
@@ -241,8 +242,9 @@ impl SessionManager {
 
     pub fn cleanup_expired_sessions(&mut self) {
         let now = current_timestamp() as i64;
-        
-        self.active_sessions.retain(|_, session| session.expires_at > now);
+
+        self.active_sessions
+            .retain(|_, session| session.expires_at > now);
     }
 }
 
@@ -257,7 +259,7 @@ fn generate_ephemeral_token(session_type: &SessionType) -> String {
     let mut rng = rand::rng();
     let random_bytes: [u8; 32] = rng.random();
     let token_base = hex::encode(random_bytes);
-    
+
     match session_type {
         SessionType::Realtime => format!("eph_{token_base}"),
         SessionType::Transcription => format!("eph_transcribe_{token_base}"),
@@ -411,7 +413,7 @@ mod tests {
     fn test_session_manager_create_realtime_session() {
         let mut manager = SessionManager::new();
         let session = manager.create_session(SessionType::Realtime, "gpt-4o-realtime".to_string());
-        
+
         assert!(session.id.starts_with("sess_"));
         assert_eq!(session.model, "gpt-4o-realtime");
         assert!(session.client_secret.starts_with("eph_"));
@@ -424,7 +426,7 @@ mod tests {
     fn test_session_manager_create_transcription_session() {
         let mut manager = SessionManager::new();
         let session = manager.create_session(SessionType::Transcription, "whisper-1".to_string());
-        
+
         assert!(session.id.starts_with("sess_"));
         assert_eq!(session.model, "whisper-1");
         assert!(session.client_secret.starts_with("eph_transcribe_"));
@@ -438,11 +440,11 @@ mod tests {
         let mut manager = SessionManager::new();
         let session = manager.create_session(SessionType::Realtime, "gpt-4o-realtime".to_string());
         let session_id = session.id.clone();
-        
+
         let retrieved = manager.get_session(&session_id);
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, session_id);
-        
+
         let non_existent = manager.get_session("sess_nonexistent");
         assert!(non_existent.is_none());
     }
@@ -450,22 +452,22 @@ mod tests {
     #[test]
     fn test_session_manager_cleanup_expired() {
         let mut manager = SessionManager::new();
-        
+
         // Create a session that appears expired (by manipulating the internal data)
         let session = manager.create_session(SessionType::Realtime, "gpt-4o-realtime".to_string());
         let session_id = session.id.clone();
-        
+
         // Manually expire the session by setting expires_at to past
         if let Some(session_data) = manager.active_sessions.get_mut(&session_id) {
             session_data.expires_at = 0; // Set to past
         }
-        
+
         // Verify session exists before cleanup
         assert!(manager.get_session(&session_id).is_some());
-        
+
         // Run cleanup
         manager.cleanup_expired_sessions();
-        
+
         // Verify session is removed after cleanup
         assert!(manager.get_session(&session_id).is_none());
     }
@@ -475,7 +477,7 @@ mod tests {
         let voice = AudioVoice::Alloy;
         let serialized = serde_json::to_string(&voice).unwrap();
         assert_eq!(serialized, "\"alloy\"");
-        
+
         let deserialized: AudioVoice = serde_json::from_str("\"nova\"").unwrap();
         assert!(matches!(deserialized, AudioVoice::Nova));
     }
@@ -485,7 +487,7 @@ mod tests {
         let format = AudioInputFormat::Pcm16;
         let serialized = serde_json::to_string(&format).unwrap();
         assert_eq!(serialized, "\"pcm16\"");
-        
+
         let deserialized: AudioInputFormat = serde_json::from_str("\"g711_ulaw\"").unwrap();
         assert!(matches!(deserialized, AudioInputFormat::G711Ulaw));
     }
@@ -495,7 +497,7 @@ mod tests {
         let tokens_num = MaxResponseOutputTokens::Number(1000);
         let serialized = serde_json::to_string(&tokens_num).unwrap();
         assert_eq!(serialized, "1000");
-        
+
         let tokens_inf = MaxResponseOutputTokens::Infinite("inf".to_string());
         let serialized = serde_json::to_string(&tokens_inf).unwrap();
         assert_eq!(serialized, "\"inf\"");
@@ -511,11 +513,14 @@ mod tests {
             create_response: Some(true),
             interrupt_response: Some(true),
         };
-        
+
         let serialized = serde_json::to_string(&turn_detection).unwrap();
         let deserialized: TurnDetection = serde_json::from_str(&serialized).unwrap();
-        
-        assert!(matches!(deserialized.detection_type, TurnDetectionType::ServerVad));
+
+        assert!(matches!(
+            deserialized.detection_type,
+            TurnDetectionType::ServerVad
+        ));
         assert_eq!(deserialized.threshold, Some(0.5));
         assert_eq!(deserialized.prefix_padding_ms, Some(300));
         assert_eq!(deserialized.silence_duration_ms, Some(200));
@@ -543,11 +548,14 @@ mod tests {
             speed: None,
             tracing: None,
         };
-        
+
         let internal_request: RealtimeSessionInternalRequest = request.into();
         assert_eq!(internal_request.model.as_ref(), "gpt-4o-realtime");
         assert!(matches!(internal_request.voice, Some(AudioVoice::Alloy)));
-        assert!(matches!(internal_request.input_audio_format, Some(AudioInputFormat::Pcm16)));
+        assert!(matches!(
+            internal_request.input_audio_format,
+            Some(AudioInputFormat::Pcm16)
+        ));
         assert_eq!(internal_request.temperature, Some(0.8));
     }
 
@@ -564,10 +572,13 @@ mod tests {
             turn_detection: None,
             modalities: Some(vec!["text".to_string()]),
         };
-        
+
         let internal_request: RealtimeTranscriptionInternalRequest = request.into();
         assert_eq!(internal_request.model.as_ref(), "whisper-1");
-        assert!(matches!(internal_request.input_audio_format, Some(AudioInputFormat::Pcm16)));
+        assert!(matches!(
+            internal_request.input_audio_format,
+            Some(AudioInputFormat::Pcm16)
+        ));
         assert!(internal_request.input_audio_transcription.is_some());
     }
 
@@ -607,7 +618,7 @@ mod tests {
         };
 
         let json = serde_json::to_string_pretty(&response).unwrap();
-        
+
         // Verify key fields are present and correctly formatted
         assert!(json.contains("\"object\": \"realtime.session\""));
         assert!(json.contains("\"voice\": \"alloy\""));
@@ -649,13 +660,13 @@ mod tests {
         };
 
         let json = serde_json::to_string_pretty(&response).unwrap();
-        
+
         // Verify key fields are present and correctly formatted
         assert!(json.contains("\"object\": \"realtime.transcription_session\""));
         assert!(json.contains("\"expires_at\": 0"));
         assert!(json.contains("\"modalities\": [\n    \"text\"\n  ]"));
         assert!(json.contains("\"input_audio_format\": \"pcm16\""));
-        
+
         // Verify it doesn't contain realtime-only fields
         assert!(!json.contains("\"voice\""));
         assert!(!json.contains("\"instructions\""));

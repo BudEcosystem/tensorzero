@@ -1172,7 +1172,7 @@ impl crate::realtime::RealtimeSessionProvider for DummyProvider {
     ) -> Result<crate::realtime::RealtimeSessionResponse, Error> {
         use crate::inference::types::current_timestamp;
         use uuid::Uuid;
-        
+
         let session_id = format!("sess_{}", Uuid::now_v7().to_string().replace('-', ""));
         let now = current_timestamp() as i64;
         let expires_at = now + 60; // 1 minute expiration
@@ -1222,7 +1222,7 @@ impl crate::realtime::RealtimeTranscriptionProvider for DummyProvider {
     ) -> Result<crate::realtime::RealtimeTranscriptionResponse, Error> {
         use crate::inference::types::current_timestamp;
         use uuid::Uuid;
-        
+
         let session_id = format!("sess_{}", Uuid::now_v7().to_string().replace('-', ""));
         let now = current_timestamp() as i64;
         let expires_at = now + 60; // 1 minute expiration
