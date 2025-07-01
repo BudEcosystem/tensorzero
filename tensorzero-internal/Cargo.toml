@@ -25,6 +25,7 @@ workspace = true
 async-stream = { workspace = true }
 async-trait = "0.1.86"
 aws-config = { version = "1.6", features = ["behavior-version-latest"] }
+base64 = "0.22.1"
 aws-sdk-bedrockruntime = { version = "1.89.0", default-features = false, features = [
     "behavior-version-latest",
     "rt-tokio",
@@ -117,7 +118,6 @@ tempfile = "3.20.0"
 tracing-test = { workspace = true }
 tensorzero = { path = "../clients/rust" }
 paste = "1.0.15"
-base64 = "0.22.1"
 aws-sdk-s3 = { version = "1.87.0", default-features = false, features = [
     "behavior-version-latest",
     "sigv4a",

@@ -73,11 +73,16 @@ run_test() {
     fi
 }
 
+# Create test images if needed
+echo -e "${YELLOW}Setting up test images...${NC}"
+python create_test_images.py
+
 # Run each test module
 run_test "chat" "Chat Completions"
 run_test "embeddings" "Embeddings"
 run_test "moderation" "Moderation"
 run_test "audio" "Audio (Transcription, Translation, TTS)"
+run_test "images" "Images (Generation, Editing, Variations)"
 
 # Run comparison tests (optional)
 if [ "$1" == "--compare" ]; then
