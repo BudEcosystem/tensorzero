@@ -1714,6 +1714,30 @@ pub async fn moderation_handler(
                     }
                 }
             }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            crate::model::ProviderConfig::Dummy(dummy_provider) => {
+                tracing::info!("Found Dummy provider for moderation");
+                // For Dummy provider, use the provider's configured model name
+                let mut provider_request = moderation_request.clone();
+                provider_request.model = Some(dummy_provider.model_name().to_string());
+                // Use the Dummy provider's moderation capability
+                match dummy_provider
+                    .moderate(&provider_request, clients.http_client, &credentials)
+                    .await
+                {
+                    Ok(provider_response) => {
+                        response = Some(crate::moderation::ModerationResponse::new(
+                            provider_response,
+                            provider_name.clone(),
+                        ));
+                        break;
+                    }
+                    Err(e) => {
+                        provider_errors.insert(provider_name.to_string(), e);
+                        continue;
+                    }
+                }
+            }
             _ => {
                 // Other providers don't support moderation yet
                 continue;
