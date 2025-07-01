@@ -133,22 +133,16 @@ async fn test_realtime_session_creation() {
             .unwrap(),
         200
     );
-    assert_eq!(
-        turn_detection
-            .get("create_response")
-            .unwrap()
-            .as_bool()
-            .unwrap(),
-        true
-    );
-    assert_eq!(
-        turn_detection
-            .get("interrupt_response")
-            .unwrap()
-            .as_bool()
-            .unwrap(),
-        true
-    );
+    assert!(turn_detection
+        .get("create_response")
+        .unwrap()
+        .as_bool()
+        .unwrap());
+    assert!(turn_detection
+        .get("interrupt_response")
+        .unwrap()
+        .as_bool()
+        .unwrap());
 
     // Check tools is empty array
     let tools = response_json.get("tools").unwrap().as_array().unwrap();
@@ -609,11 +603,8 @@ async fn test_sdk_style_realtime_session() {
     // Verify turn detection
     let td = session.get("turn_detection").unwrap();
     assert_eq!(td.get("type").unwrap().as_str().unwrap(), "server_vad");
-    assert_eq!(td.get("create_response").unwrap().as_bool().unwrap(), true);
-    assert_eq!(
-        td.get("interrupt_response").unwrap().as_bool().unwrap(),
-        true
-    );
+    assert!(td.get("create_response").unwrap().as_bool().unwrap());
+    assert!(td.get("interrupt_response").unwrap().as_bool().unwrap());
 
     // The session ID and client secret can be used for WebSocket connection
     println!("Session created with ID: {}", session.get("id").unwrap());
