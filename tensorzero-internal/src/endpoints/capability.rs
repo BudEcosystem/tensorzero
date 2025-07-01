@@ -11,6 +11,8 @@ pub enum EndpointCapability {
     AudioTranscription,
     AudioTranslation,
     TextToSpeech,
+    RealtimeSession,
+    RealtimeTranscription,
     // Future capabilities can be added here:
     // Completions,
     // Images,
@@ -27,6 +29,8 @@ impl EndpointCapability {
             Self::AudioTranscription => "audio_transcription",
             Self::AudioTranslation => "audio_translation",
             Self::TextToSpeech => "text_to_speech",
+            Self::RealtimeSession => "realtime_session",
+            Self::RealtimeTranscription => "realtime_transcription",
         }
     }
 }

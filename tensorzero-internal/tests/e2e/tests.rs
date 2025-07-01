@@ -22,6 +22,7 @@ mod otel_jaeger;
 mod prometheus;
 mod providers;
 mod proxy;
+mod realtime;
 mod render_inferences;
 mod retries;
 mod streaming_errors;

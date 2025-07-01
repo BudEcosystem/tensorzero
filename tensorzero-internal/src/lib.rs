@@ -21,6 +21,7 @@ pub mod model; // types and methods for working with TensorZero-supported models
 pub mod model_table;
 pub mod moderation; // moderation API
 pub mod observability; // utilities for observability (logs, metrics, etc.)
+pub mod realtime; // realtime API session management
 pub mod redis_client; // redis client
 mod testing;
 pub mod tool; // types and methods for working with TensorZero tools

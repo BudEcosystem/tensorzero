@@ -53,6 +53,10 @@ use crate::audio::{
 };
 use crate::embeddings::EmbeddingRequest;
 use crate::moderation::ModerationProvider;
+use crate::realtime::{
+    RealtimeSessionRequest, RealtimeSessionResponse, RealtimeTranscriptionRequest,
+    RealtimeTranscriptionResponse, SessionManager, SessionType,
+};
 use std::sync::Arc;
 
 /// A handler for the OpenAI-compatible inference endpoint
@@ -2327,6 +2331,205 @@ pub async fn text_to_speech_handler(
     Response::builder()
         .header("content-type", content_type)
         .body(Body::from(response.audio_data))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to build HTTP response: {e}"),
+                status_code: None,
+                provider_type: "openai".to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })
+}
+
+/// Handler for creating realtime sessions
+#[debug_handler(state = AppStateData)]
+pub async fn realtime_session_handler(
+    State(AppStateData {
+        config,
+        http_client: _,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(params): StructuredJson<RealtimeSessionRequest>,
+) -> Result<Response<Body>, Error> {
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Realtime session requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let _model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::RealtimeSession,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Model '{}' not found or does not support realtime sessions",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Create session manager and generate session
+    let mut session_manager = SessionManager::new();
+    let session_data = session_manager.create_session(
+        SessionType::Realtime,
+        model_resolution.original_model_name.to_string(),
+    );
+
+    // Create response with defaults matching OpenAI's format
+    let response = RealtimeSessionResponse {
+        id: session_data.id,
+        object: "realtime.session".to_string(),
+        model: params.model,
+        expires_at: 0, // OpenAI sets this to 0 for sessions
+        client_secret: crate::realtime::ClientSecret {
+            value: session_data.client_secret,
+            expires_at: session_data.expires_at,
+        },
+        voice: params.voice.or(Some(crate::realtime::AudioVoice::Alloy)),
+        input_audio_format: params.input_audio_format.or(Some(crate::realtime::AudioInputFormat::Pcm16)),
+        output_audio_format: params.output_audio_format.or(Some(crate::realtime::AudioOutputFormat::Pcm16)),
+        input_audio_noise_reduction: params.input_audio_noise_reduction,
+        temperature: params.temperature.or(Some(0.8)),
+        max_response_output_tokens: params.max_response_output_tokens.or(Some(crate::realtime::MaxResponseOutputTokens::Infinite("inf".to_string()))),
+        modalities: params.modalities.or(Some(vec!["text".to_string(), "audio".to_string()])),
+        instructions: params.instructions,
+        turn_detection: params.turn_detection.or(Some(crate::realtime::TurnDetection {
+            detection_type: crate::realtime::TurnDetectionType::ServerVad,
+            threshold: Some(0.5),
+            prefix_padding_ms: Some(300),
+            silence_duration_ms: Some(200),
+            create_response: Some(true),
+            interrupt_response: Some(true),
+        })),
+        tools: params.tools.or(Some(vec![])),
+        tool_choice: params.tool_choice.or(Some("auto".to_string())),
+        input_audio_transcription: params.input_audio_transcription,
+        include: params.include,
+        speed: params.speed.or(Some(1.0)),
+        tracing: params.tracing,
+    };
+
+    let json_response = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to serialize response: {e}"),
+        })
+    })?;
+
+    Response::builder()
+        .header("content-type", "application/json")
+        .body(Body::from(json_response))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to build HTTP response: {e}"),
+                status_code: None,
+                provider_type: "openai".to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })
+}
+
+/// Handler for creating realtime transcription sessions
+#[debug_handler(state = AppStateData)]
+pub async fn realtime_transcription_session_handler(
+    State(AppStateData {
+        config,
+        http_client: _,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(params): StructuredJson<RealtimeTranscriptionRequest>,
+) -> Result<Response<Body>, Error> {
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Realtime transcription requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let _model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::RealtimeTranscription,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Model '{}' not found or does not support realtime transcription",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Create session manager and generate session
+    let mut session_manager = SessionManager::new();
+    let session_data = session_manager.create_session(
+        SessionType::Transcription,
+        model_resolution.original_model_name.to_string(),
+    );
+
+    // Create response with defaults for transcription sessions
+    let response = RealtimeTranscriptionResponse {
+        id: session_data.id,
+        object: "realtime.transcription_session".to_string(),
+        model: params.model,
+        expires_at: 0, // OpenAI sets this to 0 for sessions
+        client_secret: crate::realtime::ClientSecret {
+            value: session_data.client_secret,
+            expires_at: session_data.expires_at,
+        },
+        input_audio_format: params.input_audio_format.or(Some(crate::realtime::AudioInputFormat::Pcm16)),
+        input_audio_transcription: params.input_audio_transcription,
+        turn_detection: params.turn_detection.or(Some(crate::realtime::TurnDetection {
+            detection_type: crate::realtime::TurnDetectionType::ServerVad,
+            threshold: Some(0.5),
+            prefix_padding_ms: Some(300),
+            silence_duration_ms: Some(200),
+            create_response: Some(true),
+            interrupt_response: Some(true),
+        })),
+        modalities: vec!["text".to_string()], // Always text-only for transcription
+    };
+
+    let json_response = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to serialize response: {e}"),
+        })
+    })?;
+
+    Response::builder()
+        .header("content-type", "application/json")
+        .body(Body::from(json_response))
         .map_err(|e| {
             Error::new(ErrorDetails::InferenceClient {
                 message: format!("Failed to build HTTP response: {e}"),
