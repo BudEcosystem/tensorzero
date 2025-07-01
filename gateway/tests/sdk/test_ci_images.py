@@ -132,9 +132,9 @@ class TestImageEditCI:
         
         assert len(response.data) == 1
         image_data = response.data[0]
-        assert hasattr(image_data, 'url') or hasattr(image_data, 'b64_json')
-        if hasattr(image_data, 'url') and image_data.url:
-            assert image_data.url.startswith('https://example.com/dummy-image-')
+        # We requested b64_json format, so should get base64 data
+        assert hasattr(image_data, 'b64_json')
+        assert image_data.b64_json is not None
 
     def test_image_edit_gpt_image_1(self):
         """Test image editing with GPT-Image-1 (dummy provider)"""
@@ -156,7 +156,7 @@ class TestImageEditCI:
         image_data = response.data[0]
         assert hasattr(image_data, 'url') or hasattr(image_data, 'b64_json')
         if hasattr(image_data, 'url') and image_data.url:
-            assert image_data.url.startswith('https://example.com/dummy-image-')
+            assert image_data.url.startswith('https://example.com/dummy-edited-image-')
 
 
 class TestImageVariationCI:
@@ -181,7 +181,7 @@ class TestImageVariationCI:
         image_data = response.data[0]
         assert hasattr(image_data, 'url') or hasattr(image_data, 'b64_json')
         if hasattr(image_data, 'url') and image_data.url:
-            assert image_data.url.startswith('https://example.com/dummy-image-')
+            assert image_data.url.startswith('https://example.com/dummy-variation-')
 
     def test_multiple_variations(self):
         """Test generating multiple variations (dummy provider)"""
@@ -202,7 +202,7 @@ class TestImageVariationCI:
         for image_data in response.data:
             assert hasattr(image_data, 'url') or hasattr(image_data, 'b64_json')
             if hasattr(image_data, 'url') and image_data.url:
-                assert image_data.url.startswith('https://example.com/dummy-image-')
+                assert image_data.url.startswith('https://example.com/dummy-variation-')
 
 
 class TestImageAPIStructure:
