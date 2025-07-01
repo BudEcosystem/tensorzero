@@ -243,6 +243,8 @@ async fn main() {
         .route(
             "/v1/realtime/transcription_sessions",
             post(endpoints::openai_compatible::realtime_transcription_session_handler),
+        )
+        .route(
             "/v1/responses",
             post(endpoints::openai_compatible::response_create_handler),
         )

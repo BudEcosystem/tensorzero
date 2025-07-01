@@ -302,6 +302,86 @@ impl ModelConfig {
         }
         Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
     }
+
+    /// Realtime session creation method (when model supports realtime session capability)
+    #[instrument(skip_all)]
+    pub async fn create_realtime_session(
+        &self,
+        request: &crate::realtime::RealtimeSessionRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::realtime::RealtimeSessionResponse, Error> {
+        // Verify this model supports realtime sessions
+        if !self.supports_endpoint(EndpointCapability::RealtimeSession) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::RealtimeSession.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .create_realtime_session(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    // No caching for realtime sessions
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Realtime transcription session creation method (when model supports realtime transcription capability)
+    #[instrument(skip_all)]
+    pub async fn create_realtime_transcription_session(
+        &self,
+        request: &crate::realtime::RealtimeTranscriptionRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::realtime::RealtimeTranscriptionResponse, Error> {
+        // Verify this model supports realtime transcription
+        if !self.supports_endpoint(EndpointCapability::RealtimeTranscription) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::RealtimeTranscription.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .create_realtime_transcription_session(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    // No caching for realtime sessions
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
 }
 
 impl UninitializedModelConfig {
@@ -1993,6 +2073,66 @@ impl ModelProvider {
             // Other providers don't support responses yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::Responses.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Realtime session creation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_realtime_session"))]
+    pub async fn create_realtime_session(
+        &self,
+        request: &crate::realtime::RealtimeSessionRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::realtime::RealtimeSessionResponse, Error> {
+        use crate::realtime::RealtimeSessionProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .create_session(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .create_session(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support realtime sessions yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::RealtimeSession.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Realtime transcription session creation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_realtime_transcription_session"))]
+    pub async fn create_realtime_transcription_session(
+        &self,
+        request: &crate::realtime::RealtimeTranscriptionRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::realtime::RealtimeTranscriptionResponse, Error> {
+        use crate::realtime::RealtimeTranscriptionProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .create_transcription_session(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .create_transcription_session(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support realtime transcription yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::RealtimeTranscription.as_str().to_string(),
                 provider: self.name.to_string(),
             })),
         }

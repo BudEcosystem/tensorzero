@@ -2,11 +2,11 @@ use crate::endpoints::inference::InferenceCredentials;
 use crate::error::Error;
 use crate::inference::types::{current_timestamp, Latency, Usage};
 use crate::tool::Tool;
+#[allow(unused_imports)]
+use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -265,22 +265,24 @@ fn generate_ephemeral_token(session_type: &SessionType) -> String {
 }
 
 // Provider Traits
+#[async_trait::async_trait]
 pub trait RealtimeSessionProvider {
-    fn create_session(
+    async fn create_session(
         &self,
         request: &RealtimeSessionRequest,
         client: &Client,
         credentials: &InferenceCredentials,
-    ) -> Pin<Box<dyn Future<Output = Result<RealtimeSessionResponse, Error>> + Send>>;
+    ) -> Result<RealtimeSessionResponse, Error>;
 }
 
+#[async_trait::async_trait]
 pub trait RealtimeTranscriptionProvider {
-    fn create_transcription_session(
+    async fn create_transcription_session(
         &self,
         request: &RealtimeTranscriptionRequest,
         client: &Client,
         credentials: &InferenceCredentials,
-    ) -> Pin<Box<dyn Future<Output = Result<RealtimeTranscriptionResponse, Error>> + Send>>;
+    ) -> Result<RealtimeTranscriptionResponse, Error>;
 }
 
 // Internal Request Types for provider routing

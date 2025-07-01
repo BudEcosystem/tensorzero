@@ -1161,3 +1161,92 @@ impl ResponseProvider for DummyProvider {
         })
     }
 }
+
+#[async_trait::async_trait]
+impl crate::realtime::RealtimeSessionProvider for DummyProvider {
+    async fn create_session(
+        &self,
+        request: &crate::realtime::RealtimeSessionRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::realtime::RealtimeSessionResponse, Error> {
+        use crate::inference::types::current_timestamp;
+        use uuid::Uuid;
+        
+        let session_id = format!("sess_{}", Uuid::now_v7().to_string().replace('-', ""));
+        let now = current_timestamp() as i64;
+        let expires_at = now + 60; // 1 minute expiration
+        let client_secret = {
+            use rand::Rng;
+            let mut rng = rand::rng();
+            let random_bytes: [u8; 16] = rng.random();
+            format!("eph_dummy_{}", hex::encode(random_bytes))
+        };
+
+        let response = crate::realtime::RealtimeSessionResponse {
+            id: session_id,
+            object: "realtime.session".to_string(),
+            model: request.model.clone(),
+            expires_at,
+            client_secret: crate::realtime::ClientSecret {
+                value: client_secret,
+                expires_at,
+            },
+            voice: request.voice.clone(),
+            input_audio_format: request.input_audio_format.clone(),
+            output_audio_format: request.output_audio_format.clone(),
+            input_audio_noise_reduction: request.input_audio_noise_reduction,
+            temperature: request.temperature,
+            max_response_output_tokens: request.max_response_output_tokens.clone(),
+            modalities: request.modalities.clone(),
+            instructions: request.instructions.clone(),
+            turn_detection: request.turn_detection.clone(),
+            tools: request.tools.clone(),
+            tool_choice: request.tool_choice.clone(),
+            input_audio_transcription: request.input_audio_transcription.clone(),
+            include: request.include.clone(),
+            speed: request.speed,
+            tracing: request.tracing.clone(),
+        };
+        Ok(response)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::realtime::RealtimeTranscriptionProvider for DummyProvider {
+    async fn create_transcription_session(
+        &self,
+        request: &crate::realtime::RealtimeTranscriptionRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::realtime::RealtimeTranscriptionResponse, Error> {
+        use crate::inference::types::current_timestamp;
+        use uuid::Uuid;
+        
+        let session_id = format!("sess_{}", Uuid::now_v7().to_string().replace('-', ""));
+        let now = current_timestamp() as i64;
+        let expires_at = now + 60; // 1 minute expiration
+        let client_secret = {
+            use rand::Rng;
+            let mut rng = rand::rng();
+            let random_bytes: [u8; 16] = rng.random();
+            format!("eph_transcribe_dummy_{}", hex::encode(random_bytes))
+        };
+
+        let response = crate::realtime::RealtimeTranscriptionResponse {
+            id: session_id,
+            object: "realtime.transcription_session".to_string(),
+            model: request.model.clone(),
+            expires_at,
+            client_secret: crate::realtime::ClientSecret {
+                value: client_secret,
+                expires_at,
+            },
+            input_audio_format: request.input_audio_format.clone(),
+            input_audio_transcription: request.input_audio_transcription.clone(),
+            turn_detection: request.turn_detection.clone(),
+            modalities: vec!["text".to_string()], // Always text-only for transcription
+        };
+        Ok(response)
+    }
+}

@@ -54,8 +54,7 @@ use crate::audio::{
 use crate::embeddings::EmbeddingRequest;
 use crate::moderation::ModerationProvider;
 use crate::realtime::{
-    RealtimeSessionRequest, RealtimeSessionResponse, RealtimeTranscriptionRequest,
-    RealtimeTranscriptionResponse, SessionManager, SessionType,
+    RealtimeSessionRequest, RealtimeTranscriptionRequest,
 };
 use std::sync::Arc;
 
@@ -2347,8 +2346,8 @@ pub async fn text_to_speech_handler(
 pub async fn realtime_session_handler(
     State(AppStateData {
         config,
-        http_client: _,
-        clickhouse_connection_info: _,
+        http_client,
+        clickhouse_connection_info,
         kafka_connection_info: _,
         authentication_info: _,
     }): AppState,
@@ -2371,7 +2370,7 @@ pub async fn realtime_session_handler(
         })
     })?;
 
-    let _model = models
+    let model = models
         .get_with_capability(
             model_name,
             crate::endpoints::capability::EndpointCapability::RealtimeSession,
@@ -2386,46 +2385,28 @@ pub async fn realtime_session_handler(
             })
         })?;
 
-    // Create session manager and generate session
-    let mut session_manager = SessionManager::new();
-    let session_data = session_manager.create_session(
-        SessionType::Realtime,
-        model_resolution.original_model_name.to_string(),
-    );
-
-    // Create response with defaults matching OpenAI's format
-    let response = RealtimeSessionResponse {
-        id: session_data.id,
-        object: "realtime.session".to_string(),
-        model: params.model,
-        expires_at: 0, // OpenAI sets this to 0 for sessions
-        client_secret: crate::realtime::ClientSecret {
-            value: session_data.client_secret,
-            expires_at: session_data.expires_at,
+    // Create credentials
+    let credentials = InferenceCredentials::default();
+    
+    // Create inference clients 
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            enabled: crate::cache::CacheEnabledMode::Off, // No caching for realtime sessions
+            max_age_s: None,
         },
-        voice: params.voice.or(Some(crate::realtime::AudioVoice::Alloy)),
-        input_audio_format: params.input_audio_format.or(Some(crate::realtime::AudioInputFormat::Pcm16)),
-        output_audio_format: params.output_audio_format.or(Some(crate::realtime::AudioOutputFormat::Pcm16)),
-        input_audio_noise_reduction: params.input_audio_noise_reduction,
-        temperature: params.temperature.or(Some(0.8)),
-        max_response_output_tokens: params.max_response_output_tokens.or(Some(crate::realtime::MaxResponseOutputTokens::Infinite("inf".to_string()))),
-        modalities: params.modalities.or(Some(vec!["text".to_string(), "audio".to_string()])),
-        instructions: params.instructions,
-        turn_detection: params.turn_detection.or(Some(crate::realtime::TurnDetection {
-            detection_type: crate::realtime::TurnDetectionType::ServerVad,
-            threshold: Some(0.5),
-            prefix_padding_ms: Some(300),
-            silence_duration_ms: Some(200),
-            create_response: Some(true),
-            interrupt_response: Some(true),
-        })),
-        tools: params.tools.or(Some(vec![])),
-        tool_choice: params.tool_choice.or(Some("auto".to_string())),
-        input_audio_transcription: params.input_audio_transcription,
-        include: params.include,
-        speed: params.speed.or(Some(1.0)),
-        tracing: params.tracing,
     };
+
+    // Call the model's realtime session capability
+    let response = model
+        .create_realtime_session(
+            &params,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
 
     let json_response = serde_json::to_string(&response).map_err(|e| {
         Error::new(ErrorDetails::InvalidRequest {
@@ -2452,8 +2433,8 @@ pub async fn realtime_session_handler(
 pub async fn realtime_transcription_session_handler(
     State(AppStateData {
         config,
-        http_client: _,
-        clickhouse_connection_info: _,
+        http_client,
+        clickhouse_connection_info,
         kafka_connection_info: _,
         authentication_info: _,
     }): AppState,
@@ -2476,7 +2457,7 @@ pub async fn realtime_transcription_session_handler(
         })
     })?;
 
-    let _model = models
+    let model = models
         .get_with_capability(
             model_name,
             crate::endpoints::capability::EndpointCapability::RealtimeTranscription,
@@ -2491,35 +2472,28 @@ pub async fn realtime_transcription_session_handler(
             })
         })?;
 
-    // Create session manager and generate session
-    let mut session_manager = SessionManager::new();
-    let session_data = session_manager.create_session(
-        SessionType::Transcription,
-        model_resolution.original_model_name.to_string(),
-    );
-
-    // Create response with defaults for transcription sessions
-    let response = RealtimeTranscriptionResponse {
-        id: session_data.id,
-        object: "realtime.transcription_session".to_string(),
-        model: params.model,
-        expires_at: 0, // OpenAI sets this to 0 for sessions
-        client_secret: crate::realtime::ClientSecret {
-            value: session_data.client_secret,
-            expires_at: session_data.expires_at,
+    // Create credentials
+    let credentials = InferenceCredentials::default();
+    
+    // Create inference clients
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            enabled: crate::cache::CacheEnabledMode::Off, // No caching for realtime sessions
+            max_age_s: None,
         },
-        input_audio_format: params.input_audio_format.or(Some(crate::realtime::AudioInputFormat::Pcm16)),
-        input_audio_transcription: params.input_audio_transcription,
-        turn_detection: params.turn_detection.or(Some(crate::realtime::TurnDetection {
-            detection_type: crate::realtime::TurnDetectionType::ServerVad,
-            threshold: Some(0.5),
-            prefix_padding_ms: Some(300),
-            silence_duration_ms: Some(200),
-            create_response: Some(true),
-            interrupt_response: Some(true),
-        })),
-        modalities: vec!["text".to_string()], // Always text-only for transcription
     };
+
+    // Call the model's realtime transcription capability
+    let response = model
+        .create_realtime_transcription_session(
+            &params,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
 
     let json_response = serde_json::to_string(&response).map_err(|e| {
         Error::new(ErrorDetails::InvalidRequest {
