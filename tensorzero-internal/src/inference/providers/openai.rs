@@ -3477,6 +3477,10 @@ struct OpenAIBatchFileResponse {
     body: OpenAIResponse,
 }
 
+use crate::realtime::{
+    RealtimeSessionProvider, RealtimeSessionRequest, RealtimeSessionResponse,
+    RealtimeTranscriptionProvider, RealtimeTranscriptionRequest, RealtimeTranscriptionResponse,
+};
 use crate::responses::{
     OpenAIResponse as ResponsesOpenAIResponse, OpenAIResponseCreateParams, ResponseInputItemsList,
     ResponseProvider, ResponseStreamEvent,
@@ -3962,6 +3966,189 @@ fn get_responses_url(base_url: &Url) -> Result<Url, Error> {
             message: format!("Failed to construct responses URL: {e}"),
         })
     })
+}
+
+// Helper function to construct realtime sessions API URL
+fn get_realtime_sessions_url(base_url: &Url) -> Result<Url, Error> {
+    base_url.join("realtime/sessions").map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to construct realtime sessions URL: {e}"),
+        })
+    })
+}
+
+// Helper function to construct realtime transcription sessions API URL
+fn get_realtime_transcription_sessions_url(base_url: &Url) -> Result<Url, Error> {
+    base_url
+        .join("realtime/transcription_sessions")
+        .map_err(|e| {
+            Error::new(ErrorDetails::Config {
+                message: format!("Failed to construct realtime transcription sessions URL: {e}"),
+            })
+        })
+}
+
+#[async_trait::async_trait]
+impl RealtimeSessionProvider for OpenAIProvider {
+    async fn create_session(
+        &self,
+        request: &RealtimeSessionRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<RealtimeSessionResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url =
+            get_realtime_sessions_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+
+        let mut request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json");
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.json(&request).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending request to OpenAI Realtime Sessions API: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                raw_response: None,
+            })
+        })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: RealtimeSessionResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                &serde_json::to_string(&request).unwrap_or_default(),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RealtimeTranscriptionProvider for OpenAIProvider {
+    async fn create_transcription_session(
+        &self,
+        request: &RealtimeTranscriptionRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<RealtimeTranscriptionResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_realtime_transcription_sessions_url(
+            self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL),
+        )?;
+
+        let mut request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json");
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.json(&request).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending request to OpenAI Realtime Transcription Sessions API: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                raw_response: None,
+            })
+        })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: RealtimeTranscriptionResponse = serde_json::from_str(&raw_response)
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                &serde_json::to_string(&request).unwrap_or_default(),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
 }
 
 #[cfg(test)]

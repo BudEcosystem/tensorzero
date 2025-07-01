@@ -102,4 +102,29 @@ endpoints = ["image_generation", "image_edit"]
 [models."gpt-image-1".providers.openai]
 type = "openai"
 model_name = "gpt-image-1"
+[models."gpt-4o-realtime-preview"]
+routing = ["openai"]
+endpoints = ["realtime_session", "realtime_transcription"]
+
+[models."gpt-4o-realtime-preview".providers.openai]
+type = "openai"
+model_name = "gpt-4o-realtime-preview"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."gpt-4o-realtime-preview-2024-12-17"]
+routing = ["openai"]
+endpoints = ["realtime_session"]
+
+[models."gpt-4o-realtime-preview-2024-12-17".providers.openai]
+type = "openai"
+model_name = "gpt-4o-realtime-preview-2024-12-17"
+api_key_location = "env::OPENAI_API_KEY"
+
+[models."gpt-4o-mini-realtime-preview"]
+routing = ["openai"]
+endpoints = ["realtime_session", "realtime_transcription"]
+
+[models."gpt-4o-mini-realtime-preview".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini-realtime-preview"
 api_key_location = "env::OPENAI_API_KEY"
