@@ -14,9 +14,11 @@ pub enum EndpointCapability {
     RealtimeSession,
     RealtimeTranscription,
     Responses,
+    ImageGeneration,
+    ImageEdit,
+    ImageVariation,
     // Future capabilities can be added here:
     // Completions,
-    // Images,
     // FineTuning,
 }
 
@@ -33,6 +35,9 @@ impl EndpointCapability {
             Self::RealtimeSession => "realtime_session",
             Self::RealtimeTranscription => "realtime_transcription",
             Self::Responses => "responses",
+            Self::ImageGeneration => "image_generation",
+            Self::ImageEdit => "image_edit",
+            Self::ImageVariation => "image_variation",
         }
     }
 }

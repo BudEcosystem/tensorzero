@@ -157,6 +157,80 @@ class TestAudio:
             os.unlink(audio_file)
 
 
+class TestImages:
+    """Test image endpoints"""
+    
+    @pytest.fixture
+    def image_file(self):
+        """Create a temporary image file for testing"""
+        from PIL import Image
+        import io
+        
+        # Create a simple test image
+        img = Image.new('RGB', (100, 100), color='red')
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+        
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(img_bytes.getvalue())
+            return f.name
+    
+    def test_image_generation(self):
+        """Test image generation"""
+        response = client.images.generate(
+            model="dall-e-2",
+            prompt="A red circle",
+            n=1,
+            size="256x256",
+            response_format="b64_json"
+        )
+        
+        assert len(response.data) == 1
+        # Dummy provider returns URL by default or base64 if requested
+        if hasattr(response.data[0], 'b64_json') and response.data[0].b64_json:
+            assert response.data[0].b64_json is not None
+        else:
+            assert hasattr(response.data[0], 'url')
+            assert response.data[0].url.startswith('https://example.com/dummy-image-')
+    
+    def test_image_edit(self, image_file):
+        """Test image editing"""
+        with open(image_file, "rb") as f:
+            response = client.images.edit(
+                model="dall-e-2",
+                image=f,
+                prompt="Add a blue border",
+                n=1,
+                size="256x256",
+                response_format="b64_json"
+            )
+        
+        assert len(response.data) == 1
+        assert hasattr(response.data[0], 'b64_json')
+    
+    def test_image_variation(self, image_file):
+        """Test image variation"""
+        with open(image_file, "rb") as f:
+            response = client.images.create_variation(
+                model="dall-e-2",
+                image=f,
+                n=1,
+                size="256x256",
+                response_format="b64_json"
+            )
+        
+        assert len(response.data) == 1
+        assert hasattr(response.data[0], 'b64_json')
+    
+    @pytest.fixture(autouse=True)
+    def cleanup_image(self, image_file):
+        """Clean up temporary image files"""
+        yield
+        if os.path.exists(image_file):
+            os.unlink(image_file)
+
+
 @pytest.mark.asyncio
 class TestAsyncSupport:
     """Test async client support"""
@@ -195,5 +269,27 @@ class TestAsyncSupport:
         )
         
         assert len(response.data[0].embedding) == 1536
+        
+        await async_client.close()
+    
+    async def test_async_images(self):
+        """Test async image generation"""
+        from openai import AsyncOpenAI
+        
+        async_client = AsyncOpenAI(
+            base_url=os.getenv("TENSORZERO_BASE_URL", "http://localhost:3001") + "/v1",
+            api_key=os.getenv("OPENAI_API_KEY", "dummy-key")
+        )
+        
+        response = await async_client.images.generate(
+            model="dall-e-2",
+            prompt="Async test image",
+            n=1,
+            size="256x256",
+            response_format="b64_json"
+        )
+        
+        assert len(response.data) == 1
+        assert hasattr(response.data[0], 'b64_json')
         
         await async_client.close()

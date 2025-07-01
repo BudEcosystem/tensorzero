@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use base64::prelude::*;
 use lazy_static::lazy_static;
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{json, Value};
@@ -39,6 +40,13 @@ use crate::tool::{ToolCall, ToolCallChunk};
 const PROVIDER_NAME: &str = "Dummy";
 const PROVIDER_TYPE: &str = "dummy";
 
+// 1x1 transparent PNG for dummy image responses
+const DUMMY_PNG_BYTES: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+    0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 248, 15, 0, 1, 1, 1, 0, 24,
+    221, 142, 175, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 #[derive(Debug, Default)]
 pub struct DummyProvider {
     pub model_name: String,
@@ -68,6 +76,37 @@ impl DummyProvider {
 
     pub fn model_name(&self) -> &str {
         &self.model_name
+    }
+
+    /// Helper function to generate dummy image data based on response format
+    fn generate_dummy_image_data(
+        &self,
+        response_format: Option<&crate::images::ImageResponseFormat>,
+        url_type: &str,
+        request_id: &Uuid,
+        index: Option<usize>,
+    ) -> crate::images::ImageData {
+        match response_format {
+            Some(crate::images::ImageResponseFormat::B64Json) => {
+                let base64_data = base64::prelude::BASE64_STANDARD.encode(DUMMY_PNG_BYTES);
+                crate::images::ImageData {
+                    url: None,
+                    b64_json: Some(base64_data),
+                    revised_prompt: None,
+                }
+            }
+            _ => {
+                let url = match index {
+                    Some(i) => format!("https://example.com/dummy-{url_type}-{request_id}-{i}.png"),
+                    None => format!("https://example.com/dummy-{url_type}-{request_id}.png"),
+                };
+                crate::images::ImageData {
+                    url: Some(url),
+                    b64_json: None,
+                    revised_prompt: None,
+                }
+            }
+        }
     }
 }
 
@@ -889,6 +928,128 @@ impl crate::audio::TextToSpeechProvider for DummyProvider {
             },
             latency: Latency::NonStreaming {
                 response_time: Duration::from_millis(100),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::images::ImageGenerationProvider for DummyProvider {
+    async fn generate_image(
+        &self,
+        request: &crate::images::ImageGenerationRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageGenerationProviderResponse, Error> {
+        // Generate dummy image data - return dummy URLs or base64 depending on request
+        let num_images = request.n.unwrap_or(1) as usize;
+        let mut images = Vec::new();
+
+        for _i in 0..num_images {
+            let mut image_data = self.generate_dummy_image_data(
+                request.response_format.as_ref(),
+                "image",
+                &request.id,
+                None,
+            );
+            // Add revised prompt for generation if style is specified
+            if request.response_format != Some(crate::images::ImageResponseFormat::B64Json) {
+                image_data.revised_prompt = request
+                    .style
+                    .as_ref()
+                    .map(|_| format!("Enhanced prompt: {}", request.prompt));
+            }
+            images.push(image_data);
+        }
+
+        let response = crate::images::ImageGenerationProviderResponse {
+            id: request.id,
+            created: current_timestamp(),
+            data: images,
+            raw_request: "dummy image generation request".to_string(),
+            raw_response: "dummy image generation response".to_string(),
+            usage: Usage {
+                input_tokens: 0, // Images don't have token usage
+                output_tokens: 0,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(200),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::images::ImageEditProvider for DummyProvider {
+    async fn edit_image(
+        &self,
+        request: &crate::images::ImageEditRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageEditProviderResponse, Error> {
+        let num_images = request.n.unwrap_or(1) as usize;
+        let mut images = Vec::new();
+
+        for _i in 0..num_images {
+            let image_data = self.generate_dummy_image_data(
+                request.response_format.as_ref(),
+                "edited-image",
+                &request.id,
+                None,
+            );
+            images.push(image_data);
+        }
+
+        let response = crate::images::ImageEditProviderResponse {
+            id: request.id,
+            created: current_timestamp(),
+            data: images,
+            raw_request: "dummy image edit request".to_string(),
+            raw_response: "dummy image edit response".to_string(),
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(200),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::images::ImageVariationProvider for DummyProvider {
+    async fn create_image_variation(
+        &self,
+        request: &crate::images::ImageVariationRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageVariationProviderResponse, Error> {
+        let num_images = request.n.unwrap_or(1) as usize;
+        let mut images = Vec::new();
+
+        for i in 0..num_images {
+            let image_data = self.generate_dummy_image_data(
+                request.response_format.as_ref(),
+                "variation",
+                &request.id,
+                Some(i),
+            );
+            images.push(image_data);
+        }
+
+        let response = crate::images::ImageVariationProviderResponse {
+            id: request.id,
+            created: current_timestamp(),
+            data: images,
+            raw_request: "dummy image variation request".to_string(),
+            raw_response: "dummy image variation response".to_string(),
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(200),
             },
         };
         Ok(response)

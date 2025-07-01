@@ -2681,6 +2681,724 @@ async fn parse_audio_multipart_generic<P: AudioMultipartParams>(
     Ok((file_data, filename, params))
 }
 
+// OpenAI-compatible Images API handlers
+
+use crate::images::*;
+
+/// Handler for image generation (POST /v1/images/generations)
+#[debug_handler(state = AppStateData)]
+pub async fn image_generation_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(params): StructuredJson<OpenAICompatibleImageGenerationParams>,
+) -> Result<Response<Body>, Error> {
+    if !params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible image generation request: {:?}",
+            params.unknown_fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Image generation requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::ImageGeneration,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support image generation",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Convert parameters to internal format
+    let size = params.size.as_deref().map(str::parse).transpose()?;
+
+    let quality = params.quality.as_deref().map(str::parse).transpose()?;
+
+    let style = params.style.as_deref().map(str::parse).transpose()?;
+
+    let response_format = params
+        .response_format
+        .as_deref()
+        .map(str::parse)
+        .transpose()?;
+
+    let background = params.background.as_deref().map(str::parse).transpose()?;
+
+    let moderation = params.moderation.as_deref().map(str::parse).transpose()?;
+
+    let output_format = params
+        .output_format
+        .as_deref()
+        .map(str::parse)
+        .transpose()?;
+
+    // Validate prompt length
+    if params.prompt.len() > 4000 {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Prompt must be 4,000 characters or less".to_string(),
+        }));
+    }
+
+    // Validate n parameter
+    if let Some(n) = params.n {
+        if n == 0 || n > 10 {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "n must be between 1 and 10".to_string(),
+            }));
+        }
+    }
+
+    // Create image generation request
+    let image_request = ImageGenerationRequest {
+        id: Uuid::now_v7(),
+        prompt: params.prompt,
+        model: Arc::from(model_name.as_str()),
+        n: params.n,
+        size,
+        quality,
+        style,
+        response_format,
+        user: params.user,
+        background,
+        moderation,
+        output_compression: params.output_compression,
+        output_format,
+    };
+
+    // Create credentials - empty for now as OpenAI compatible endpoint doesn't support dynamic credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients with no caching for images
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off,
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // Call the model's image generation capability
+    let response = model
+        .generate_image(
+            &image_request,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
+
+    // Convert to OpenAI-compatible format
+    let openai_response = OpenAICompatibleImageResponse {
+        created: response.created,
+        data: response
+            .data
+            .into_iter()
+            .map(|d| OpenAICompatibleImageData {
+                url: d.url,
+                b64_json: d.b64_json,
+                revised_prompt: d.revised_prompt,
+            })
+            .collect(),
+    };
+
+    Ok(Json(openai_response).into_response())
+}
+
+/// Handler for image editing (POST /v1/images/edits)
+#[debug_handler(state = AppStateData)]
+pub async fn image_edit_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    multipart: axum::extract::Multipart,
+) -> Result<Response<Body>, Error> {
+    // Parse multipart form data
+    let (image_data, image_filename, mask_data, mask_filename, params) =
+        parse_image_edit_multipart(multipart).await?;
+
+    if !params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible image edit request: {:?}",
+            params.unknown_fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Image edit requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::ImageEdit,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support image editing",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Convert parameters to internal format
+    let size = params.size.as_deref().map(str::parse).transpose()?;
+
+    let response_format = params
+        .response_format
+        .as_deref()
+        .map(str::parse)
+        .transpose()?;
+
+    let background = params.background.as_deref().map(str::parse).transpose()?;
+
+    let quality = params.quality.as_deref().map(str::parse).transpose()?;
+
+    let output_format = params
+        .output_format
+        .as_deref()
+        .map(str::parse)
+        .transpose()?;
+
+    // Validate parameters
+    if params.prompt.len() > 1000 {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Prompt must be 1,000 characters or less".to_string(),
+        }));
+    }
+
+    if let Some(n) = params.n {
+        if n == 0 || n > 10 {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "n must be between 1 and 10".to_string(),
+            }));
+        }
+    }
+
+    // Create image edit request
+    let image_request = ImageEditRequest {
+        id: Uuid::now_v7(),
+        image: image_data,
+        image_filename,
+        prompt: params.prompt,
+        mask: mask_data,
+        mask_filename,
+        model: Arc::from(model_name.as_str()),
+        n: params.n,
+        size,
+        response_format,
+        user: params.user,
+        background,
+        quality,
+        output_compression: params.output_compression,
+        output_format,
+    };
+
+    // Create credentials - empty for now as OpenAI compatible endpoint doesn't support dynamic credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients with no caching for images
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off,
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // Call the model's image edit capability
+    let response = model
+        .edit_image(
+            &image_request,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
+
+    // Convert to OpenAI-compatible format
+    let openai_response = OpenAICompatibleImageResponse {
+        created: response.created,
+        data: response
+            .data
+            .into_iter()
+            .map(|d| OpenAICompatibleImageData {
+                url: d.url,
+                b64_json: d.b64_json,
+                revised_prompt: d.revised_prompt,
+            })
+            .collect(),
+    };
+
+    Ok(Json(openai_response).into_response())
+}
+
+/// Handler for image variations (POST /v1/images/variations)
+#[debug_handler(state = AppStateData)]
+pub async fn image_variation_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    multipart: axum::extract::Multipart,
+) -> Result<Response<Body>, Error> {
+    // Parse multipart form data
+    let (image_data, image_filename, params) = parse_image_variation_multipart(multipart).await?;
+
+    if !params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in OpenAI-compatible image variation request: {:?}",
+            params.unknown_fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Image variation requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::ImageVariation,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Model '{}' not found or does not support image variations",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Convert parameters to internal format
+    let size = params.size.as_deref().map(str::parse).transpose()?;
+
+    let response_format = params
+        .response_format
+        .as_deref()
+        .map(str::parse)
+        .transpose()?;
+
+    // Validate parameters
+    if let Some(n) = params.n {
+        if n == 0 || n > 10 {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "n must be between 1 and 10".to_string(),
+            }));
+        }
+    }
+
+    // Create image variation request
+    let image_request = ImageVariationRequest {
+        id: Uuid::now_v7(),
+        image: image_data,
+        image_filename,
+        model: Arc::from(model_name.as_str()),
+        n: params.n,
+        size,
+        response_format,
+        user: params.user,
+    };
+
+    // Create credentials - empty for now as OpenAI compatible endpoint doesn't support dynamic credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients with no caching for images
+    let cache_options = crate::cache::CacheOptions {
+        enabled: crate::cache::CacheEnabledMode::Off,
+        max_age_s: None,
+    };
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &cache_options,
+    };
+
+    // Call the model's image variation capability
+    let response = model
+        .create_image_variation(
+            &image_request,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
+
+    // Convert to OpenAI-compatible format
+    let openai_response = OpenAICompatibleImageResponse {
+        created: response.created,
+        data: response
+            .data
+            .into_iter()
+            .map(|d| OpenAICompatibleImageData {
+                url: d.url,
+                b64_json: d.b64_json,
+                revised_prompt: d.revised_prompt,
+            })
+            .collect(),
+    };
+
+    Ok(Json(openai_response).into_response())
+}
+
+// OpenAI-compatible Image parameter types
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenAICompatibleImageGenerationParams {
+    pub prompt: String,
+    pub model: String,
+    pub n: Option<u8>,
+    pub size: Option<String>,
+    pub quality: Option<String>,
+    pub style: Option<String>,
+    pub response_format: Option<String>,
+    pub user: Option<String>,
+    // GPT-Image-1 specific parameters
+    pub background: Option<String>,
+    pub moderation: Option<String>,
+    pub output_compression: Option<u8>,
+    pub output_format: Option<String>,
+    #[serde(flatten)]
+    pub unknown_fields: HashMap<String, Value>,
+}
+
+#[derive(Debug, Default)]
+pub struct OpenAICompatibleImageEditParams {
+    pub model: String,
+    pub prompt: String,
+    pub n: Option<u8>,
+    pub size: Option<String>,
+    pub response_format: Option<String>,
+    pub user: Option<String>,
+    // Model-specific parameters
+    pub background: Option<String>,
+    pub quality: Option<String>,
+    pub output_compression: Option<u8>,
+    pub output_format: Option<String>,
+    pub unknown_fields: HashMap<String, Value>,
+}
+
+#[derive(Debug, Default)]
+pub struct OpenAICompatibleImageVariationParams {
+    pub model: String,
+    pub n: Option<u8>,
+    pub size: Option<String>,
+    pub response_format: Option<String>,
+    pub user: Option<String>,
+    pub unknown_fields: HashMap<String, Value>,
+}
+
+// OpenAI-compatible Image response types
+#[derive(Debug, Serialize)]
+pub struct OpenAICompatibleImageResponse {
+    pub created: u64,
+    pub data: Vec<OpenAICompatibleImageData>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAICompatibleImageData {
+    pub url: Option<String>,
+    pub b64_json: Option<String>,
+    pub revised_prompt: Option<String>,
+}
+
+// Image multipart form parsing helpers
+async fn parse_image_edit_multipart(
+    mut multipart: axum::extract::Multipart,
+) -> Result<
+    (
+        Vec<u8>,
+        String,
+        Option<Vec<u8>>,
+        Option<String>,
+        OpenAICompatibleImageEditParams,
+    ),
+    Error,
+> {
+    let mut image_data = None;
+    let mut image_filename = None;
+    let mut mask_data = None;
+    let mut mask_filename = None;
+    let mut params = OpenAICompatibleImageEditParams::default();
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to parse multipart field: {e}"),
+        })
+    })? {
+        let name = field.name().unwrap_or("").to_string();
+
+        match name.as_str() {
+            "image" => {
+                image_filename = Some(field.file_name().unwrap_or("image.png").to_string());
+                image_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InvalidRequest {
+                                message: format!("Failed to read image data: {e}"),
+                            })
+                        })?
+                        .to_vec(),
+                );
+            }
+            "mask" => {
+                mask_filename = Some(field.file_name().unwrap_or("mask.png").to_string());
+                mask_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InvalidRequest {
+                                message: format!("Failed to read mask data: {e}"),
+                            })
+                        })?
+                        .to_vec(),
+                );
+            }
+            _ => {
+                let value = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read field '{name}': {e}"),
+                    })
+                })?;
+                set_image_edit_field(&mut params, &name, value)?;
+            }
+        }
+    }
+
+    let image_data = image_data.ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'image' field".to_string(),
+        })
+    })?;
+
+    let image_filename = image_filename.unwrap_or_else(|| "image.png".to_string());
+
+    if params.model.is_empty() {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'model' field".to_string(),
+        }));
+    }
+
+    if params.prompt.is_empty() {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'prompt' field".to_string(),
+        }));
+    }
+
+    // Validate file size (4MB limit for images)
+    if image_data.len() > 4 * 1024 * 1024 {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Image file size exceeds 4MB limit".to_string(),
+        }));
+    }
+
+    if let Some(ref mask) = mask_data {
+        if mask.len() > 4 * 1024 * 1024 {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "Mask file size exceeds 4MB limit".to_string(),
+            }));
+        }
+    }
+
+    Ok((image_data, image_filename, mask_data, mask_filename, params))
+}
+
+async fn parse_image_variation_multipart(
+    mut multipart: axum::extract::Multipart,
+) -> Result<(Vec<u8>, String, OpenAICompatibleImageVariationParams), Error> {
+    let mut image_data = None;
+    let mut image_filename = None;
+    let mut params = OpenAICompatibleImageVariationParams::default();
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to parse multipart field: {e}"),
+        })
+    })? {
+        let name = field.name().unwrap_or("").to_string();
+
+        match name.as_str() {
+            "image" => {
+                image_filename = Some(field.file_name().unwrap_or("image.png").to_string());
+                image_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InvalidRequest {
+                                message: format!("Failed to read image data: {e}"),
+                            })
+                        })?
+                        .to_vec(),
+                );
+            }
+            _ => {
+                let value = field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read field '{name}': {e}"),
+                    })
+                })?;
+                set_image_variation_field(&mut params, &name, value)?;
+            }
+        }
+    }
+
+    let image_data = image_data.ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'image' field".to_string(),
+        })
+    })?;
+
+    let image_filename = image_filename.unwrap_or_else(|| "image.png".to_string());
+
+    if params.model.is_empty() {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing required 'model' field".to_string(),
+        }));
+    }
+
+    // Validate file size (4MB limit)
+    if image_data.len() > 4 * 1024 * 1024 {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: "Image file size exceeds 4MB limit".to_string(),
+        }));
+    }
+
+    Ok((image_data, image_filename, params))
+}
+
+fn set_image_edit_field(
+    params: &mut OpenAICompatibleImageEditParams,
+    name: &str,
+    value: String,
+) -> Result<(), Error> {
+    match name {
+        "model" => params.model = value,
+        "prompt" => params.prompt = value,
+        "n" => {
+            params.n = Some(value.parse().map_err(|_| {
+                Error::new(ErrorDetails::InvalidRequest {
+                    message: format!("Invalid value for 'n': {value}"),
+                })
+            })?);
+        }
+        "size" => params.size = Some(value),
+        "response_format" => params.response_format = Some(value),
+        "user" => params.user = Some(value),
+        "background" => params.background = Some(value),
+        "quality" => params.quality = Some(value),
+        "output_compression" => {
+            params.output_compression = Some(value.parse().map_err(|_| {
+                Error::new(ErrorDetails::InvalidRequest {
+                    message: format!("Invalid value for 'output_compression': {value}"),
+                })
+            })?);
+        }
+        "output_format" => params.output_format = Some(value),
+        _ => {
+            params
+                .unknown_fields
+                .insert(name.to_string(), Value::String(value));
+        }
+    }
+    Ok(())
+}
+
+fn set_image_variation_field(
+    params: &mut OpenAICompatibleImageVariationParams,
+    name: &str,
+    value: String,
+) -> Result<(), Error> {
+    match name {
+        "model" => params.model = value,
+        "n" => {
+            params.n = Some(value.parse().map_err(|_| {
+                Error::new(ErrorDetails::InvalidRequest {
+                    message: format!("Invalid value for 'n': {value}"),
+                })
+            })?);
+        }
+        "size" => params.size = Some(value),
+        "response_format" => params.response_format = Some(value),
+        "user" => params.user = Some(value),
+        _ => {
+            params
+                .unknown_fields
+                .insert(name.to_string(), Value::String(value));
+        }
+    }
+    Ok(())
+}
+
 // OpenAI-compatible Responses API handlers
 
 use crate::responses::OpenAIResponseCreateParams;
