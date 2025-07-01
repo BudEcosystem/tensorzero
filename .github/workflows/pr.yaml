@@ -316,6 +316,7 @@ jobs:
         run: |
           cd gateway/tests/sdk
           echo "TENSORZERO_BASE_URL=http://localhost:3001" > .env
+          echo "OPENAI_API_KEY=dummy-key-for-testing" >> .env
           
       - name: Build the gateway and mock provider for SDK tests
         run: |
