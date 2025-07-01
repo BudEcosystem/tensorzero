@@ -83,7 +83,7 @@ impl DummyProvider {
         &self,
         response_format: Option<&crate::images::ImageResponseFormat>,
         url_type: &str,
-        request_id: &str,
+        request_id: &Uuid,
         index: Option<usize>,
     ) -> crate::images::ImageData {
         match response_format {
@@ -97,11 +97,8 @@ impl DummyProvider {
             }
             _ => {
                 let url = match index {
-                    Some(i) => format!(
-                        "https://example.com/dummy-{}-{}-{}.png",
-                        url_type, request_id, i
-                    ),
-                    None => format!("https://example.com/dummy-{}-{}.png", url_type, request_id),
+                    Some(i) => format!("https://example.com/dummy-{url_type}-{request_id}-{i}.png"),
+                    None => format!("https://example.com/dummy-{url_type}-{request_id}.png"),
                 };
                 crate::images::ImageData {
                     url: Some(url),
