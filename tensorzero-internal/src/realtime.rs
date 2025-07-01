@@ -1,12 +1,11 @@
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::Error;
-use crate::inference::types::{current_timestamp, Latency, Usage};
+use crate::inference::types::{Latency, Usage};
 use crate::tool::Tool;
 #[expect(unused_imports)]
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -187,85 +186,6 @@ pub struct InputAudioTranscription {
     pub prompt: Option<String>,
 }
 
-// Session Management
-pub struct SessionManager {
-    active_sessions: HashMap<String, SessionData>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionData {
-    pub id: String,
-    pub session_type: SessionType,
-    pub model: String,
-    pub expires_at: i64,
-    pub client_secret: String,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Clone)]
-pub enum SessionType {
-    Realtime,
-    Transcription,
-}
-
-impl SessionManager {
-    pub fn new() -> Self {
-        Self {
-            active_sessions: HashMap::new(),
-        }
-    }
-
-    pub fn create_session(&mut self, session_type: SessionType, model: String) -> SessionData {
-        let session_id = format!("sess_{}", Uuid::now_v7().to_string().replace('-', ""));
-        let now = current_timestamp() as i64;
-        let expires_at = now + 60; // 1 minute expiration
-
-        let client_secret = generate_ephemeral_token(&session_type);
-
-        let session_data = SessionData {
-            id: session_id.clone(),
-            session_type,
-            model,
-            expires_at,
-            client_secret,
-            created_at: now,
-        };
-
-        self.active_sessions
-            .insert(session_id, session_data.clone());
-        session_data
-    }
-
-    pub fn get_session(&self, session_id: &str) -> Option<&SessionData> {
-        self.active_sessions.get(session_id)
-    }
-
-    pub fn cleanup_expired_sessions(&mut self) {
-        let now = current_timestamp() as i64;
-
-        self.active_sessions
-            .retain(|_, session| session.expires_at > now);
-    }
-}
-
-impl Default for SessionManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn generate_ephemeral_token(session_type: &SessionType) -> String {
-    use rand::Rng;
-    let mut rng = rand::rng();
-    let random_bytes: [u8; 32] = rng.random();
-    let token_base = hex::encode(random_bytes);
-
-    match session_type {
-        SessionType::Realtime => format!("eph_{token_base}"),
-        SessionType::Transcription => format!("eph_transcribe_{token_base}"),
-    }
-}
-
 // Provider Traits
 #[async_trait::async_trait]
 pub trait RealtimeSessionProvider {
@@ -408,69 +328,6 @@ impl From<RealtimeTranscriptionRequest> for RealtimeTranscriptionInternalRequest
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_session_manager_create_realtime_session() {
-        let mut manager = SessionManager::new();
-        let session = manager.create_session(SessionType::Realtime, "gpt-4o-realtime".to_string());
-
-        assert!(session.id.starts_with("sess_"));
-        assert_eq!(session.model, "gpt-4o-realtime");
-        assert!(session.client_secret.starts_with("eph_"));
-        assert!(session.expires_at > session.created_at);
-        assert_eq!(session.expires_at - session.created_at, 60); // 1 minute expiration
-        assert!(matches!(session.session_type, SessionType::Realtime));
-    }
-
-    #[test]
-    fn test_session_manager_create_transcription_session() {
-        let mut manager = SessionManager::new();
-        let session = manager.create_session(SessionType::Transcription, "whisper-1".to_string());
-
-        assert!(session.id.starts_with("sess_"));
-        assert_eq!(session.model, "whisper-1");
-        assert!(session.client_secret.starts_with("eph_transcribe_"));
-        assert!(session.expires_at > session.created_at);
-        assert_eq!(session.expires_at - session.created_at, 60); // 1 minute expiration
-        assert!(matches!(session.session_type, SessionType::Transcription));
-    }
-
-    #[test]
-    fn test_session_manager_get_session() {
-        let mut manager = SessionManager::new();
-        let session = manager.create_session(SessionType::Realtime, "gpt-4o-realtime".to_string());
-        let session_id = session.id.clone();
-
-        let retrieved = manager.get_session(&session_id);
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().id, session_id);
-
-        let non_existent = manager.get_session("sess_nonexistent");
-        assert!(non_existent.is_none());
-    }
-
-    #[test]
-    fn test_session_manager_cleanup_expired() {
-        let mut manager = SessionManager::new();
-
-        // Create a session that appears expired (by manipulating the internal data)
-        let session = manager.create_session(SessionType::Realtime, "gpt-4o-realtime".to_string());
-        let session_id = session.id.clone();
-
-        // Manually expire the session by setting expires_at to past
-        if let Some(session_data) = manager.active_sessions.get_mut(&session_id) {
-            session_data.expires_at = 0; // Set to past
-        }
-
-        // Verify session exists before cleanup
-        assert!(manager.get_session(&session_id).is_some());
-
-        // Run cleanup
-        manager.cleanup_expired_sessions();
-
-        // Verify session is removed after cleanup
-        assert!(manager.get_session(&session_id).is_none());
-    }
 
     #[test]
     fn test_audio_voice_serialization() {
