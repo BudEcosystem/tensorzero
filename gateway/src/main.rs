@@ -243,6 +243,24 @@ async fn main() {
         .route(
             "/v1/realtime/transcription_sessions",
             post(endpoints::openai_compatible::realtime_transcription_session_handler),
+            "/v1/responses",
+            post(endpoints::openai_compatible::response_create_handler),
+        )
+        .route(
+            "/v1/responses/{response_id}",
+            get(endpoints::openai_compatible::response_retrieve_handler),
+        )
+        .route(
+            "/v1/responses/{response_id}",
+            delete(endpoints::openai_compatible::response_delete_handler),
+        )
+        .route(
+            "/v1/responses/{response_id}/cancel",
+            post(endpoints::openai_compatible::response_cancel_handler),
+        )
+        .route(
+            "/v1/responses/{response_id}/input_items",
+            get(endpoints::openai_compatible::response_input_items_handler),
         );
 
     // Apply authentication middleware only if authentication is enabled

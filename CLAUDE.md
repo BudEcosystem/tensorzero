@@ -279,3 +279,130 @@ curl -X POST http://localhost:3000/v1/audio/transcriptions \
 - Additional audio format support
 - WebSocket support for bidirectional audio streaming
 - Audio file validation beyond size checks
+
+## Responses API Implementation Details
+
+### Responses API Overview
+
+TensorZero implements OpenAI's next-generation Responses API endpoints:
+- `/v1/responses` - Create a new response (POST)
+- `/v1/responses/{response_id}` - Retrieve a response (GET)
+- `/v1/responses/{response_id}` - Delete a response (DELETE)
+- `/v1/responses/{response_id}/cancel` - Cancel a response (POST)
+- `/v1/responses/{response_id}/input_items` - List input items (GET)
+
+### Key Features
+
+1. **Stateful Conversations**: Support for multi-turn conversations with `previous_response_id`
+2. **Advanced Tool Calling**: Parallel tool calls, MCP tools support, tool choice control
+3. **Reasoning Models**: Special support for o1 and reasoning-capable models
+4. **Multimodal Support**: Text, images, audio, and other modalities
+5. **Streaming**: Server-Sent Events (SSE) for real-time responses
+6. **Metadata**: Custom metadata and user tracking
+7. **Background Processing**: Async response generation
+
+### Implementation Architecture
+
+The gateway acts as a routing layer:
+- No state management in the gateway
+- Providers handle all complex logic
+- Simple pass-through with format conversion
+- Streaming handled similarly to chat completions
+
+### Responses-Specific Types
+
+Located in `tensorzero-internal/src/responses.rs`:
+- Request types: `OpenAIResponseCreateParams`
+- Response types: `OpenAIResponse`, `ResponseStatus`, `ResponseUsage`, `ResponseError`
+- Streaming types: `ResponseStreamEvent`, `ResponseEventType`
+- Provider trait: `ResponseProvider`
+
+### Model Configuration for Responses
+
+```toml
+# Standard responses model
+[models."gpt-4-responses"]
+routing = ["openai"]
+endpoints = ["responses"]
+
+[models."gpt-4-responses".providers.openai]
+type = "openai"
+model_name = "gpt-4"
+
+# Reasoning model with responses support
+[models."o1-responses"]
+routing = ["openai"]
+endpoints = ["responses"]
+
+[models."o1-responses".providers.openai]
+type = "openai"
+model_name = "o1"
+```
+
+### Provider Implementation
+
+The ResponseProvider trait requires:
+```rust
+async fn create_response(...) -> Result<OpenAIResponse, Error>;
+async fn stream_response(...) -> Result<Box<dyn Stream<...>>, Error>;
+```
+
+Implemented by:
+- OpenAI provider (full implementation)
+- Dummy provider (for testing)
+
+### Key Implementation Decisions
+
+1. **No Gateway State**: All state management delegated to providers
+2. **Streaming Reuse**: Uses existing streaming infrastructure from chat completions
+3. **Error Handling**: Non-supported operations return clear error messages
+4. **Unknown Fields**: Accepted with warnings for forward compatibility
+5. **Model Resolution for Non-Create Operations**: Since OpenAI's API doesn't include a model parameter for retrieve/delete/cancel/list operations, TensorZero requires the model name to be specified via the `x-model-name` header. If not provided, it defaults to `gpt-4-responses`.
+
+### Testing Responses API
+
+1. **Unit Tests**: Type serialization/deserialization tests
+2. **Integration Tests**: Handler logic and model resolution
+3. **E2E Tests**: Full request/response cycle (in `tests/e2e/responses.rs`)
+
+Example test requests:
+```bash
+# Create a response
+curl -X POST http://localhost:3000/v1/responses \
+  -H "Authorization: Bearer test-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4-responses",
+    "input": "Hello, world!",
+    "instructions": "Be helpful",
+    "stream": true
+  }'
+
+# Retrieve a response (note the x-model-name header)
+curl -X GET http://localhost:3000/v1/responses/resp_123 \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
+
+# Delete a response
+curl -X DELETE http://localhost:3000/v1/responses/resp_123 \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
+
+# Cancel a response
+curl -X POST http://localhost:3000/v1/responses/resp_123/cancel \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
+
+# List input items
+curl -X GET http://localhost:3000/v1/responses/resp_123/input_items \
+  -H "Authorization: Bearer test-key" \
+  -H "x-model-name: gpt-4-responses"
+```
+
+### Future Considerations
+
+- State persistence for conversation management
+- Integration with existing inference pipeline
+- Caching strategy for responses
+- Metrics and observability for response lifecycle
+- Provider-specific optimizations

@@ -13,6 +13,7 @@ pub enum EndpointCapability {
     TextToSpeech,
     RealtimeSession,
     RealtimeTranscription,
+    Responses,
     // Future capabilities can be added here:
     // Completions,
     // Images,
@@ -31,6 +32,7 @@ impl EndpointCapability {
             Self::TextToSpeech => "text_to_speech",
             Self::RealtimeSession => "realtime_session",
             Self::RealtimeTranscription => "realtime_transcription",
+            Self::Responses => "responses",
         }
     }
 }

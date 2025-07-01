@@ -661,6 +661,205 @@ impl ModelConfig {
             provider_errors,
         }))
     }
+
+    /// Create response method
+    #[tracing::instrument(skip_all, fields(model_name = model_name, otel.name = "model_create_response"))]
+    pub async fn create_response(
+        &self,
+        request: &crate::responses::OpenAIResponseCreateParams,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::responses::OpenAIResponse, Error> {
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let response = provider
+                .create_response(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(Error::new(ErrorDetails::ModelProvidersExhausted {
+            provider_errors,
+        }))
+    }
+
+    /// Stream response method
+    #[tracing::instrument(skip_all, fields(model_name = model_name, otel.name = "model_stream_response"))]
+    pub async fn stream_response(
+        &self,
+        request: &crate::responses::OpenAIResponseCreateParams,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<
+        Box<
+            dyn futures::Stream<Item = Result<crate::responses::ResponseStreamEvent, Error>>
+                + Send
+                + Unpin,
+        >,
+        Error,
+    > {
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let response = provider
+                .stream_response(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(Error::new(ErrorDetails::ModelProvidersExhausted {
+            provider_errors,
+        }))
+    }
+
+    #[tracing::instrument(skip_all, fields(model_name = model_name, response_id = response_id, otel.name = "model_retrieve_response"))]
+    pub async fn retrieve_response(
+        &self,
+        response_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::responses::OpenAIResponse, Error> {
+        let mut provider_errors = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::InvalidModelProvider {
+                    model_name: model_name.to_string(),
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let response = provider
+                .retrieve_response(response_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(Error::new(ErrorDetails::ModelProvidersExhausted {
+            provider_errors,
+        }))
+    }
+
+    #[tracing::instrument(skip_all, fields(model_name = model_name, response_id = response_id, otel.name = "model_delete_response"))]
+    pub async fn delete_response(
+        &self,
+        response_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<serde_json::Value, Error> {
+        let mut provider_errors = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::InvalidModelProvider {
+                    model_name: model_name.to_string(),
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let response = provider
+                .delete_response(response_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(Error::new(ErrorDetails::ModelProvidersExhausted {
+            provider_errors,
+        }))
+    }
+
+    #[tracing::instrument(skip_all, fields(model_name = model_name, response_id = response_id, otel.name = "model_cancel_response"))]
+    pub async fn cancel_response(
+        &self,
+        response_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::responses::OpenAIResponse, Error> {
+        let mut provider_errors = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::InvalidModelProvider {
+                    model_name: model_name.to_string(),
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let response = provider
+                .cancel_response(response_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(Error::new(ErrorDetails::ModelProvidersExhausted {
+            provider_errors,
+        }))
+    }
+
+    #[tracing::instrument(skip_all, fields(model_name = model_name, response_id = response_id, otel.name = "model_list_response_input_items"))]
+    pub async fn list_response_input_items(
+        &self,
+        response_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::responses::ResponseInputItemsList, Error> {
+        let mut provider_errors = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::InvalidModelProvider {
+                    model_name: model_name.to_string(),
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+            let response = provider
+                .list_response_input_items(response_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(Error::new(ErrorDetails::ModelProvidersExhausted {
+            provider_errors,
+        }))
+    }
 }
 
 async fn stream_with_cache_write(
@@ -1615,6 +1814,185 @@ impl ModelProvider {
             // Other providers don't support text-to-speech yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::TextToSpeech.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Create response method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_response"))]
+    pub async fn create_response(
+        &self,
+        request: &crate::responses::OpenAIResponseCreateParams,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::responses::OpenAIResponse, Error> {
+        use crate::responses::ResponseProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .create_response(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .create_response(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support responses yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Responses.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Stream response method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_stream_response"))]
+    pub async fn stream_response(
+        &self,
+        request: &crate::responses::OpenAIResponseCreateParams,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<
+        Box<
+            dyn futures::Stream<Item = Result<crate::responses::ResponseStreamEvent, Error>>
+                + Send
+                + Unpin,
+        >,
+        Error,
+    > {
+        use crate::responses::ResponseProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .stream_response(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .stream_response(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support responses yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Responses.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, response_id = response_id, otel.name = "model_provider_retrieve_response"))]
+    pub async fn retrieve_response(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::responses::OpenAIResponse, Error> {
+        use crate::responses::ResponseProvider;
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .retrieve_response(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .retrieve_response(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support responses yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Responses.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, response_id = response_id, otel.name = "model_provider_delete_response"))]
+    pub async fn delete_response(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<serde_json::Value, Error> {
+        use crate::responses::ResponseProvider;
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .delete_response(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .delete_response(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support responses yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Responses.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, response_id = response_id, otel.name = "model_provider_cancel_response"))]
+    pub async fn cancel_response(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::responses::OpenAIResponse, Error> {
+        use crate::responses::ResponseProvider;
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .cancel_response(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .cancel_response(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support responses yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Responses.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, response_id = response_id, otel.name = "model_provider_list_response_input_items"))]
+    pub async fn list_response_input_items(
+        &self,
+        response_id: &str,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::responses::ResponseInputItemsList, Error> {
+        use crate::responses::ResponseProvider;
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .list_response_input_items(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .list_response_input_items(response_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support responses yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Responses.as_str().to_string(),
                 provider: self.name.to_string(),
             })),
         }
