@@ -319,11 +319,11 @@ jobs:
           echo "OPENAI_API_KEY=dummy-key-for-testing" >> .env
           
       - name: Build the gateway for SDK tests
-        run: cargo build --release --bin gateway
+        run: cargo build --release --bin gateway --features e2e_tests
         
       - name: Launch the gateway for SDK tests
         run: |
-          cargo run --release --bin gateway -- --config-file gateway/tests/sdk/test_config_ci.toml > sdk_gateway_logs.txt 2>&1 &
+          cargo run --release --bin gateway --features e2e_tests -- --config-file gateway/tests/sdk/test_config_ci.toml > sdk_gateway_logs.txt 2>&1 &
           GATEWAY_PID=$!
           echo "GATEWAY_PID=$GATEWAY_PID" >> $GITHUB_ENV
           
