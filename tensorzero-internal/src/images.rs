@@ -253,7 +253,6 @@ impl ImageSize {
             ImageSize::Size1792x1024 => "1792x1024",
         }
     }
-
 }
 
 impl FromStr for ImageSize {
@@ -286,7 +285,6 @@ impl ImageQuality {
             ImageQuality::HD => "hd",
         }
     }
-
 }
 
 impl FromStr for ImageQuality {
@@ -314,7 +312,6 @@ impl ImageStyle {
             ImageStyle::Natural => "natural",
         }
     }
-
 }
 
 impl FromStr for ImageStyle {
@@ -338,7 +335,6 @@ impl ImageResponseFormat {
             ImageResponseFormat::B64Json => "b64_json",
         }
     }
-
 }
 
 impl FromStr for ImageResponseFormat {
@@ -363,7 +359,6 @@ impl ImageBackground {
             ImageBackground::Auto => "auto",
         }
     }
-
 }
 
 impl FromStr for ImageBackground {
@@ -388,7 +383,6 @@ impl ImageModeration {
             ImageModeration::Auto => "auto",
         }
     }
-
 }
 
 impl FromStr for ImageModeration {
@@ -413,7 +407,6 @@ impl ImageOutputFormat {
             ImageOutputFormat::Webp => "webp",
         }
     }
-
 }
 
 impl FromStr for ImageOutputFormat {

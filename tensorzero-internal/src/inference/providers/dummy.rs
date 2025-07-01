@@ -907,7 +907,7 @@ impl crate::images::ImageGenerationProvider for DummyProvider {
         let num_images = request.n.unwrap_or(1) as usize;
         let mut images = Vec::new();
 
-        for i in 0..num_images {
+        for _i in 0..num_images {
             let image_data = match request.response_format {
                 Some(crate::images::ImageResponseFormat::B64Json) => {
                     // Generate a small dummy base64 image (1x1 transparent PNG)
@@ -967,7 +967,7 @@ impl crate::images::ImageEditProvider for DummyProvider {
         let num_images = request.n.unwrap_or(1) as usize;
         let mut images = Vec::new();
 
-        for i in 0..num_images {
+        for _i in 0..num_images {
             let image_data = match request.response_format {
                 Some(crate::images::ImageResponseFormat::B64Json) => {
                     let dummy_png = vec![
@@ -1023,7 +1023,7 @@ impl crate::images::ImageVariationProvider for DummyProvider {
         let num_images = request.n.unwrap_or(1) as usize;
         let mut images = Vec::new();
 
-        for i in 0..num_images {
+        for _i in 0..num_images {
             let image_data = match request.response_format {
                 Some(crate::images::ImageResponseFormat::B64Json) => {
                     let dummy_png = vec![
@@ -1042,7 +1042,7 @@ impl crate::images::ImageVariationProvider for DummyProvider {
                 _ => crate::images::ImageData {
                     url: Some(format!(
                         "https://example.com/dummy-variation-{}-{}.png",
-                        request.id, i
+                        request.id, _i
                     )),
                     b64_json: None,
                     revised_prompt: None,

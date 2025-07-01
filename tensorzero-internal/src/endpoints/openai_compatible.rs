@@ -2737,23 +2737,11 @@ pub async fn image_generation_handler(
         })?;
 
     // Convert parameters to internal format
-    let size = params
-        .size
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let size = params.size.as_deref().map(str::parse).transpose()?;
 
-    let quality = params
-        .quality
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let quality = params.quality.as_deref().map(str::parse).transpose()?;
 
-    let style = params
-        .style
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let style = params.style.as_deref().map(str::parse).transpose()?;
 
     let response_format = params
         .response_format
@@ -2761,17 +2749,9 @@ pub async fn image_generation_handler(
         .map(str::parse)
         .transpose()?;
 
-    let background = params
-        .background
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let background = params.background.as_deref().map(str::parse).transpose()?;
 
-    let moderation = params
-        .moderation
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let moderation = params.moderation.as_deref().map(str::parse).transpose()?;
 
     let output_format = params
         .output_format
@@ -2909,11 +2889,7 @@ pub async fn image_edit_handler(
         })?;
 
     // Convert parameters to internal format
-    let size = params
-        .size
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let size = params.size.as_deref().map(str::parse).transpose()?;
 
     let response_format = params
         .response_format
@@ -2921,17 +2897,9 @@ pub async fn image_edit_handler(
         .map(str::parse)
         .transpose()?;
 
-    let background = params
-        .background
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let background = params.background.as_deref().map(str::parse).transpose()?;
 
-    let quality = params
-        .quality
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let quality = params.quality.as_deref().map(str::parse).transpose()?;
 
     let output_format = params
         .output_format
@@ -3069,11 +3037,7 @@ pub async fn image_variation_handler(
         })?;
 
     // Convert parameters to internal format
-    let size = params
-        .size
-        .as_deref()
-        .map(str::parse)
-        .transpose()?;
+    let size = params.size.as_deref().map(str::parse).transpose()?;
 
     let response_format = params
         .response_format
