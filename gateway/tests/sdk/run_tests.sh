@@ -78,6 +78,7 @@ run_test "chat" "Chat Completions"
 run_test "embeddings" "Embeddings"
 run_test "moderation" "Moderation"
 run_test "audio" "Audio (Transcription, Translation, TTS)"
+run_test "realtime" "Realtime API (Session Management)"
 
 # Run comparison tests (optional)
 if [ "$1" == "--compare" ]; then

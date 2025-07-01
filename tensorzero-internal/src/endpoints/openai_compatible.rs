@@ -53,6 +53,7 @@ use crate::audio::{
 };
 use crate::embeddings::EmbeddingRequest;
 use crate::moderation::ModerationProvider;
+use crate::realtime::{RealtimeSessionRequest, RealtimeTranscriptionRequest};
 use std::sync::Arc;
 
 /// A handler for the OpenAI-compatible inference endpoint
@@ -2351,6 +2352,177 @@ pub async fn text_to_speech_handler(
     Response::builder()
         .header("content-type", content_type)
         .body(Body::from(response.audio_data))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to build HTTP response: {e}"),
+                status_code: None,
+                provider_type: "openai".to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })
+}
+
+/// Handler for creating realtime sessions
+#[debug_handler(state = AppStateData)]
+pub async fn realtime_session_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(params): StructuredJson<RealtimeSessionRequest>,
+) -> Result<Response<Body>, Error> {
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Realtime session requests must specify a model, not a function".to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::RealtimeSession,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Model '{}' not found or does not support realtime sessions",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Create credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            enabled: crate::cache::CacheEnabledMode::Off, // No caching for realtime sessions
+            max_age_s: None,
+        },
+    };
+
+    // Call the model's realtime session capability
+    let response = model
+        .create_realtime_session(&params, &model_resolution.original_model_name, &clients)
+        .await?;
+
+    let json_response = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to serialize response: {e}"),
+        })
+    })?;
+
+    Response::builder()
+        .header("content-type", "application/json")
+        .body(Body::from(json_response))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to build HTTP response: {e}"),
+                status_code: None,
+                provider_type: "openai".to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })
+}
+
+/// Handler for creating realtime transcription sessions
+#[debug_handler(state = AppStateData)]
+pub async fn realtime_transcription_session_handler(
+    State(AppStateData {
+        config,
+        http_client,
+        clickhouse_connection_info,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    headers: HeaderMap,
+    StructuredJson(params): StructuredJson<RealtimeTranscriptionRequest>,
+) -> Result<Response<Body>, Error> {
+    // Resolve the model name based on authentication state
+    let model_resolution = model_resolution::resolve_model_name(
+        &params.model,
+        &headers,
+        false, // not for embedding
+    )?;
+
+    // Extract model configuration
+    use crate::model::ModelTableExt;
+    let models = config.models.read().await;
+    let model_name = model_resolution.model_name.as_ref().ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Realtime transcription requests must specify a model, not a function"
+                .to_string(),
+        })
+    })?;
+
+    let model = models
+        .get_with_capability(
+            model_name,
+            crate::endpoints::capability::EndpointCapability::RealtimeTranscription,
+        )
+        .await?
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Model '{}' not found or does not support realtime transcription",
+                    model_resolution.original_model_name
+                ),
+            })
+        })?;
+
+    // Create credentials
+    let credentials = InferenceCredentials::default();
+
+    // Create inference clients
+    let clients = super::inference::InferenceClients {
+        http_client: &http_client,
+        credentials: &credentials,
+        clickhouse_connection_info: &clickhouse_connection_info,
+        cache_options: &crate::cache::CacheOptions {
+            enabled: crate::cache::CacheEnabledMode::Off, // No caching for realtime sessions
+            max_age_s: None,
+        },
+    };
+
+    // Call the model's realtime transcription capability
+    let response = model
+        .create_realtime_transcription_session(
+            &params,
+            &model_resolution.original_model_name,
+            &clients,
+        )
+        .await?;
+
+    let json_response = serde_json::to_string(&response).map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to serialize response: {e}"),
+        })
+    })?;
+
+    Response::builder()
+        .header("content-type", "application/json")
+        .body(Body::from(json_response))
         .map_err(|e| {
             Error::new(ErrorDetails::InferenceClient {
                 message: format!("Failed to build HTTP response: {e}"),
