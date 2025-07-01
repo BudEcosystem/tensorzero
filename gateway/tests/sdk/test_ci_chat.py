@@ -105,13 +105,12 @@ class TestChatCompletionsCI:
             max_tokens=50,
             top_p=0.9,
             frequency_penalty=0.5,
-            presence_penalty=0.5,
-            n=2  # Request 2 completions
+            presence_penalty=0.5
+            # Note: n > 1 is not supported by TensorZero's OpenAI-compatible endpoint
         )
         
         assert response.choices
-        # Dummy provider might only return 1 choice regardless of n
-        assert len(response.choices) >= 1
+        assert len(response.choices) == 1
         
     def test_different_models(self):
         """Test different model configurations"""
