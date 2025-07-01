@@ -345,11 +345,8 @@ jobs:
       - name: Run SDK integration tests
         run: |
           cd gateway/tests/sdk
-          python3 -m venv .venv
-          source .venv/bin/activate
-          pip install -r requirements.txt
-          # Run CI-specific tests designed for the dummy provider
-          pytest -v test_ci_basic.py
+          # Use the CI-specific test runner script
+          ./run_tests_ci.sh
           
       - name: Print gateway logs
         if: always()

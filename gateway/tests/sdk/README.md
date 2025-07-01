@@ -26,23 +26,42 @@ This directory contains integration tests that validate TensorZero's OpenAI-comp
 
 ## Running Tests
 
-### Run All Tests
+### Full Integration Tests (Requires OpenAI API Key)
+
+To run all integration tests with real OpenAI API:
 ```bash
-./run_tests.sh
+./run_tests_full.sh
+```
+
+To run tests with comparison against direct OpenAI API:
+```bash
+./run_tests_full.sh --compare
+```
+
+### CI Tests (Uses Dummy Provider)
+
+To run CI-friendly tests without requiring API keys:
+```bash
+# Start gateway with CI config first:
+cargo run --bin gateway --features e2e_tests -- --config-file gateway/tests/sdk/test_config_ci.toml
+
+# Then run CI tests:
+./run_tests_ci.sh
 ```
 
 ### Run Specific Test Module
 ```bash
+# Full tests (requires API key)
 pytest test_chat.py -v
 pytest test_embeddings.py -v
 pytest test_moderation.py -v
 pytest test_audio.py -v
 pytest test_images.py -v
-```
 
-### Run with Direct OpenAI Comparison
-```bash
-./run_tests.sh --compare
+# CI tests (dummy provider)
+pytest test_ci_basic.py -v      # All endpoints
+pytest test_ci_chat.py -v       # Chat specific
+pytest test_ci_images.py -v     # Images specific
 ```
 
 ## Test Coverage
@@ -142,11 +161,20 @@ cd fixtures/images
 
 ## CI Integration
 
-These tests can be integrated into CI/CD pipelines:
+### For GitHub Actions (No API Keys Required)
+```yaml
+- name: Start TensorZero with CI Config
+  run: cargo run --bin gateway --features e2e_tests -- --config-file gateway/tests/sdk/test_config_ci.toml &
+  
+- name: Run CI Integration Tests
+  run: cd gateway/tests/sdk && ./run_tests_ci.sh
+```
+
+### For Full Testing (Requires API Keys)
 ```yaml
 - name: Start TensorZero
-  run: cargo run --bin gateway -- --config-file gateway/tests/integration_tests/test_config.toml &
+  run: cargo run --bin gateway -- --config-file gateway/tests/sdk/test_config.toml &
   
-- name: Run Integration Tests
-  run: cd gateway/tests/integration_tests && ./run_tests.sh
+- name: Run Full Integration Tests
+  run: cd gateway/tests/sdk && ./run_tests_full.sh
 ```
