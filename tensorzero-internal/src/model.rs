@@ -302,6 +302,150 @@ impl ModelConfig {
         }
         Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
     }
+
+    /// Image generation method (when model supports image generation capability)
+    #[instrument(skip_all)]
+    pub async fn generate_image(
+        &self,
+        request: &crate::images::ImageGenerationRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::images::ImageGenerationResponse, Error> {
+        // Verify this model supports image generation
+        if !self.supports_endpoint(EndpointCapability::ImageGeneration) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageGeneration.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .generate_image(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    let image_response = crate::images::ImageGenerationResponse {
+                        id: response.id,
+                        created: response.created,
+                        data: response.data,
+                        raw_request: response.raw_request,
+                        raw_response: response.raw_response,
+                        usage: response.usage,
+                        latency: response.latency,
+                    };
+                    return Ok(image_response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Image editing method (when model supports image editing capability)
+    #[instrument(skip_all)]
+    pub async fn edit_image(
+        &self,
+        request: &crate::images::ImageEditRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::images::ImageEditResponse, Error> {
+        // Verify this model supports image editing
+        if !self.supports_endpoint(EndpointCapability::ImageEdit) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageEdit.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .edit_image(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    let image_response = crate::images::ImageEditResponse {
+                        id: response.id,
+                        created: response.created,
+                        data: response.data,
+                        raw_request: response.raw_request,
+                        raw_response: response.raw_response,
+                        usage: response.usage,
+                        latency: response.latency,
+                    };
+                    return Ok(image_response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Image variation method (when model supports image variation capability)
+    #[instrument(skip_all)]
+    pub async fn create_image_variation(
+        &self,
+        request: &crate::images::ImageVariationRequest,
+        model_name: &str,
+        clients: &crate::endpoints::inference::InferenceClients<'_>,
+    ) -> Result<crate::images::ImageVariationResponse, Error> {
+        // Verify this model supports image variation
+        if !self.supports_endpoint(EndpointCapability::ImageVariation) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageVariation.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .create_image_variation(request, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    let image_response = crate::images::ImageVariationResponse {
+                        id: response.id,
+                        created: response.created,
+                        data: response.data,
+                        raw_request: response.raw_request,
+                        raw_response: response.raw_response,
+                        usage: response.usage,
+                        latency: response.latency,
+                    };
+                    return Ok(image_response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
 }
 
 impl UninitializedModelConfig {
@@ -1814,6 +1958,92 @@ impl ModelProvider {
             // Other providers don't support text-to-speech yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::TextToSpeech.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Image generation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_image_generation"))]
+    pub async fn generate_image(
+        &self,
+        request: &crate::images::ImageGenerationRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageGenerationProviderResponse, Error> {
+        use crate::images::ImageGenerationProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support image generation yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageGeneration.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Image edit method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_image_edit"))]
+    pub async fn edit_image(
+        &self,
+        request: &crate::images::ImageEditRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageEditProviderResponse, Error> {
+        use crate::images::ImageEditProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider.edit_image(request, client, dynamic_api_keys).await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider.edit_image(request, client, dynamic_api_keys).await
+            }
+            // Other providers don't support image editing yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageEdit.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Image variation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_image_variation"))]
+    pub async fn create_image_variation(
+        &self,
+        request: &crate::images::ImageVariationRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageVariationProviderResponse, Error> {
+        use crate::images::ImageVariationProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .create_image_variation(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .create_image_variation(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support image variations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageVariation.as_str().to_string(),
                 provider: self.name.to_string(),
             })),
         }

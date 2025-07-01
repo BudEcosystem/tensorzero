@@ -12,9 +12,11 @@ pub enum EndpointCapability {
     AudioTranslation,
     TextToSpeech,
     Responses,
+    ImageGeneration,
+    ImageEdit,
+    ImageVariation,
     // Future capabilities can be added here:
     // Completions,
-    // Images,
     // FineTuning,
 }
 
@@ -29,6 +31,9 @@ impl EndpointCapability {
             Self::AudioTranslation => "audio_translation",
             Self::TextToSpeech => "text_to_speech",
             Self::Responses => "responses",
+            Self::ImageGeneration => "image_generation",
+            Self::ImageEdit => "image_edit",
+            Self::ImageVariation => "image_variation",
         }
     }
 }

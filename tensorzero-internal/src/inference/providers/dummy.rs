@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use base64::prelude::*;
 use lazy_static::lazy_static;
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{json, Value};
@@ -889,6 +890,179 @@ impl crate::audio::TextToSpeechProvider for DummyProvider {
             },
             latency: Latency::NonStreaming {
                 response_time: Duration::from_millis(100),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::images::ImageGenerationProvider for DummyProvider {
+    async fn generate_image(
+        &self,
+        request: &crate::images::ImageGenerationRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageGenerationProviderResponse, Error> {
+        // Generate dummy image data - return dummy URLs or base64 depending on request
+        let num_images = request.n.unwrap_or(1) as usize;
+        let mut images = Vec::new();
+
+        for i in 0..num_images {
+            let image_data = match request.response_format {
+                Some(crate::images::ImageResponseFormat::B64Json) => {
+                    // Generate a small dummy base64 image (1x1 transparent PNG)
+                    let dummy_png = vec![
+                        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1,
+                        0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84,
+                        120, 156, 99, 248, 15, 0, 1, 1, 1, 0, 24, 221, 142, 175, 0, 0, 0, 0, 73,
+                        69, 78, 68, 174, 66, 96, 130,
+                    ];
+                    let base64_data = base64::prelude::BASE64_STANDARD.encode(&dummy_png);
+                    crate::images::ImageData {
+                        url: None,
+                        b64_json: Some(base64_data),
+                        revised_prompt: None,
+                    }
+                }
+                _ => crate::images::ImageData {
+                    url: Some(format!(
+                        "https://example.com/dummy-image-{}.png",
+                        request.id
+                    )),
+                    b64_json: None,
+                    revised_prompt: request
+                        .style
+                        .as_ref()
+                        .map(|_| format!("Enhanced prompt: {}", request.prompt)),
+                },
+            };
+            images.push(image_data);
+        }
+
+        let response = crate::images::ImageGenerationProviderResponse {
+            id: request.id,
+            created: current_timestamp(),
+            data: images,
+            raw_request: "dummy image generation request".to_string(),
+            raw_response: "dummy image generation response".to_string(),
+            usage: Usage {
+                input_tokens: 0, // Images don't have token usage
+                output_tokens: 0,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(200),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::images::ImageEditProvider for DummyProvider {
+    async fn edit_image(
+        &self,
+        request: &crate::images::ImageEditRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageEditProviderResponse, Error> {
+        let num_images = request.n.unwrap_or(1) as usize;
+        let mut images = Vec::new();
+
+        for i in 0..num_images {
+            let image_data = match request.response_format {
+                Some(crate::images::ImageResponseFormat::B64Json) => {
+                    let dummy_png = vec![
+                        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1,
+                        0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84,
+                        120, 156, 99, 248, 15, 0, 1, 1, 1, 0, 24, 221, 142, 175, 0, 0, 0, 0, 73,
+                        69, 78, 68, 174, 66, 96, 130,
+                    ];
+                    let base64_data = base64::prelude::BASE64_STANDARD.encode(&dummy_png);
+                    crate::images::ImageData {
+                        url: None,
+                        b64_json: Some(base64_data),
+                        revised_prompt: None,
+                    }
+                }
+                _ => crate::images::ImageData {
+                    url: Some(format!(
+                        "https://example.com/dummy-edited-image-{}.png",
+                        request.id
+                    )),
+                    b64_json: None,
+                    revised_prompt: None,
+                },
+            };
+            images.push(image_data);
+        }
+
+        let response = crate::images::ImageEditProviderResponse {
+            id: request.id,
+            created: current_timestamp(),
+            data: images,
+            raw_request: "dummy image edit request".to_string(),
+            raw_response: "dummy image edit response".to_string(),
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(200),
+            },
+        };
+        Ok(response)
+    }
+}
+
+impl crate::images::ImageVariationProvider for DummyProvider {
+    async fn create_image_variation(
+        &self,
+        request: &crate::images::ImageVariationRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageVariationProviderResponse, Error> {
+        let num_images = request.n.unwrap_or(1) as usize;
+        let mut images = Vec::new();
+
+        for i in 0..num_images {
+            let image_data = match request.response_format {
+                Some(crate::images::ImageResponseFormat::B64Json) => {
+                    let dummy_png = vec![
+                        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1,
+                        0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84,
+                        120, 156, 99, 248, 15, 0, 1, 1, 1, 0, 24, 221, 142, 175, 0, 0, 0, 0, 73,
+                        69, 78, 68, 174, 66, 96, 130,
+                    ];
+                    let base64_data = base64::prelude::BASE64_STANDARD.encode(&dummy_png);
+                    crate::images::ImageData {
+                        url: None,
+                        b64_json: Some(base64_data),
+                        revised_prompt: None,
+                    }
+                }
+                _ => crate::images::ImageData {
+                    url: Some(format!(
+                        "https://example.com/dummy-variation-{}-{}.png",
+                        request.id, i
+                    )),
+                    b64_json: None,
+                    revised_prompt: None,
+                },
+            };
+            images.push(image_data);
+        }
+
+        let response = crate::images::ImageVariationProviderResponse {
+            id: request.id,
+            created: current_timestamp(),
+            data: images,
+            raw_request: "dummy image variation request".to_string(),
+            raw_response: "dummy image variation response".to_string(),
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+            latency: Latency::NonStreaming {
+                response_time: Duration::from_millis(200),
             },
         };
         Ok(response)
