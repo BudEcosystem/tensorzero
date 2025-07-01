@@ -126,7 +126,8 @@ class TestImageEditCI:
                 image=image_file,
                 prompt="Add a bright yellow sun",
                 n=1,
-                size="512x512"
+                size="512x512",
+                response_format="b64_json"
             )
         
         assert len(response.data) == 1
@@ -238,6 +239,8 @@ class TestImageAPIStructure:
                 response_format="b64_json"
             )
             assert len(response.data) == 1
+            # When requesting b64_json format, should get base64 data
+            assert response.data[0].b64_json is not None
         except Exception as e:
             pytest.fail(f"Valid parameters should not raise exception: {e}")
 

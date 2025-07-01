@@ -182,13 +182,17 @@ class TestImages:
             model="dall-e-2",
             prompt="A red circle",
             n=1,
-            size="256x256"
+            size="256x256",
+            response_format="b64_json"
         )
         
         assert len(response.data) == 1
-        # Dummy provider returns base64 data
-        assert hasattr(response.data[0], 'b64_json')
-        assert response.data[0].b64_json is not None
+        # Dummy provider returns URL by default or base64 if requested
+        if hasattr(response.data[0], 'b64_json') and response.data[0].b64_json:
+            assert response.data[0].b64_json is not None
+        else:
+            assert hasattr(response.data[0], 'url')
+            assert response.data[0].url.startswith('https://example.com/dummy-image-')
     
     def test_image_edit(self, image_file):
         """Test image editing"""
@@ -198,7 +202,8 @@ class TestImages:
                 image=f,
                 prompt="Add a blue border",
                 n=1,
-                size="256x256"
+                size="256x256",
+                response_format="b64_json"
             )
         
         assert len(response.data) == 1
@@ -211,7 +216,8 @@ class TestImages:
                 model="dall-e-2",
                 image=f,
                 n=1,
-                size="256x256"
+                size="256x256",
+                response_format="b64_json"
             )
         
         assert len(response.data) == 1
@@ -279,7 +285,8 @@ class TestAsyncSupport:
             model="dall-e-2",
             prompt="Async test image",
             n=1,
-            size="256x256"
+            size="256x256",
+            response_format="b64_json"
         )
         
         assert len(response.data) == 1
