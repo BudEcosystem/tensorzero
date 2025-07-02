@@ -33,14 +33,20 @@ impl Migration for Migration0031<'_> {
     /// Check if the migration has already been applied by checking the enum values
     async fn should_apply(&self) -> Result<bool, Error> {
         use super::check_column_exists;
-        
+
         // First check if the status column exists
         if !check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await? {
             // If there's no status column, we need to check if status_new exists
             // which would mean we're in the middle of the migration
-            return Ok(check_column_exists(self.clickhouse, "BatchRequest", "status_new", MIGRATION_ID).await?);
+            return Ok(check_column_exists(
+                self.clickhouse,
+                "BatchRequest",
+                "status_new",
+                MIGRATION_ID,
+            )
+            .await?);
         }
-        
+
         let column_type =
             get_column_type(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?;
 
@@ -60,7 +66,7 @@ impl Migration for Migration0031<'_> {
 
     async fn apply(&self, _clean_start: bool) -> Result<(), Error> {
         use super::check_column_exists;
-        
+
         // ClickHouse doesn't support direct enum modification, so we need to:
         // 1. Add a new column with the extended enum
         // 2. Copy data from old column to new column
