@@ -860,6 +860,323 @@ impl ModelConfig {
             provider_errors,
         }))
     }
+
+    /// Batch file upload method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn upload_batch_file(
+        &self,
+        content: Vec<u8>,
+        filename: String,
+        purpose: String,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .upload_batch_file(content.clone(), filename.clone(), purpose.clone(), clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Batch creation method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn create_batch(
+        &self,
+        input_file_id: String,
+        endpoint: String,
+        completion_window: String,
+        metadata: Option<HashMap<String, String>>,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .create_batch(input_file_id.clone(), endpoint.clone(), completion_window.clone(), metadata.clone(), clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Get batch status method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn get_batch(
+        &self,
+        batch_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .get_batch(batch_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Get batch file method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn get_batch_file(
+        &self,
+        file_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .get_file(file_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Get batch file content method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn get_batch_file_content(
+        &self,
+        file_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<Vec<u8>, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .get_file_content(file_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Delete batch file method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn delete_batch_file(
+        &self,
+        file_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .delete_file(file_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// List batches method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn list_batches(
+        &self,
+        params: crate::openai_batch::ListBatchesParams,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::ListBatchesResponse, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .list_batches(params.clone(), clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Cancel batch method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn cancel_batch(
+        &self,
+        batch_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .cancel_batch(batch_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
 }
 
 async fn stream_with_cache_write(
@@ -1993,6 +2310,251 @@ impl ModelProvider {
             // Other providers don't support responses yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::Responses.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Upload batch file method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_upload_batch_file"))]
+    pub async fn upload_batch_file(
+        &self,
+        content: Vec<u8>,
+        filename: String,
+        purpose: String,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .upload_file(content, filename, purpose, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .upload_file(content, filename, purpose, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Create batch method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_batch"))]
+    pub async fn create_batch(
+        &self,
+        input_file_id: String,
+        endpoint: String,
+        completion_window: String,
+        metadata: Option<HashMap<String, String>>,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .create_batch(input_file_id, endpoint, completion_window, metadata, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .create_batch(input_file_id, endpoint, completion_window, metadata, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Get batch method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, batch_id = batch_id, otel.name = "model_provider_get_batch"))]
+    pub async fn get_batch(
+        &self,
+        batch_id: &str,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .get_batch(batch_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .get_batch(batch_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Get file method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, file_id = file_id, otel.name = "model_provider_get_file"))]
+    pub async fn get_file(
+        &self,
+        file_id: &str,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .get_file(file_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .get_file(file_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Get file content method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, file_id = file_id, otel.name = "model_provider_get_file_content"))]
+    pub async fn get_file_content(
+        &self,
+        file_id: &str,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<Vec<u8>, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .get_file_content(file_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .get_file_content(file_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Delete file method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, file_id = file_id, otel.name = "model_provider_delete_file"))]
+    pub async fn delete_file(
+        &self,
+        file_id: &str,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .delete_file(file_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .delete_file(file_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// List batches method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_list_batches"))]
+    pub async fn list_batches(
+        &self,
+        params: crate::openai_batch::ListBatchesParams,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::ListBatchesResponse, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .list_batches(params, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .list_batches(params, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Cancel batch method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, batch_id = batch_id, otel.name = "model_provider_cancel_batch"))]
+    pub async fn cancel_batch(
+        &self,
+        batch_id: &str,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        use crate::inference::providers::batch::BatchProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .cancel_batch(batch_id, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .cancel_batch(batch_id, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support batch operations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
                 provider: self.name.to_string(),
             })),
         }

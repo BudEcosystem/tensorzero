@@ -9,7 +9,7 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 
 # Configuration
 DURATION="${PERF_TEST_DURATION:-30s}"
-RATE="${PERF_TEST_RATE:-1000}"
+RATE="${PERF_TEST_RATE:-10000}"
 TIMEOUT="${PERF_TEST_TIMEOUT:-5s}"
 OUTPUT_FILE="${PERF_TEST_OUTPUT:-performance-results.json}"
 

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use axum::body::Body;
 use axum::debug_handler;
-use axum::extract::{Path, State};
+use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
@@ -52,7 +52,15 @@ use crate::audio::{
     TimestampGranularity,
 };
 use crate::embeddings::EmbeddingRequest;
+use crate::file_storage::validate_batch_file;
 use crate::moderation::ModerationProvider;
+use crate::openai_batch::{
+    validate_batch_create_request, ListBatchesParams,
+    OpenAIBatchCreateRequest,
+};
+use crate::inference::providers::openai::OpenAIProvider;
+use crate::inference::providers::batch::BatchProvider;
+use crate::model::CredentialLocation;
 use std::sync::Arc;
 
 /// A handler for the OpenAI-compatible inference endpoint
@@ -2884,6 +2892,545 @@ pub async fn response_input_items_handler(
     let body = serde_json::to_string(&response).map_err(|e| {
         Error::new(ErrorDetails::InferenceServer {
             message: format!("Failed to serialize response: {e}"),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
+}
+
+/// File upload handler for OpenAI Batch API
+#[debug_handler(state = AppStateData)]
+pub async fn file_upload_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Response<Body>, Error> {
+    let mut file_data: Option<Vec<u8>> = None;
+    let mut filename: Option<String> = None;
+    let mut purpose: Option<String> = None;
+
+    // Process multipart form data
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Failed to read multipart field: {e}"),
+        })
+    })? {
+        let field_name = field.name().unwrap_or("").to_string();
+
+        match field_name.as_str() {
+            "file" => {
+                filename = field.file_name().map(|s| s.to_string());
+                file_data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InvalidRequest {
+                                message: format!("Failed to read file data: {e}"),
+                            })
+                        })?
+                        .to_vec(),
+                );
+            }
+            "purpose" => {
+                purpose = Some(field.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InvalidRequest {
+                        message: format!("Failed to read purpose field: {e}"),
+                    })
+                })?);
+            }
+            _ => {
+                // Ignore unknown fields
+            }
+        }
+    }
+
+    // Validate required fields
+    let file_data = file_data.ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing file field".to_string(),
+        })
+    })?;
+
+    let filename = filename.ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: "Missing filename in file field".to_string(),
+        })
+    })?;
+
+    let purpose = purpose.unwrap_or_else(|| "batch".to_string());
+
+    // Validate purpose
+    if purpose != "batch" {
+        return Err(Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Invalid purpose: {purpose}. Only 'batch' is supported"),
+        }));
+    }
+
+    // Validate file for batch processing
+    let content_type = "application/jsonl"; // Default content type for JSONL
+    validate_batch_file(&file_data, &filename, content_type)?;
+
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // Upload file to the provider
+    let file_object = openai_provider
+        .upload_file(
+            file_data,
+            filename,
+            purpose,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Return the file object as response
+    let body = serde_json::to_string(&file_object).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize file object: {e}"),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
+}
+
+/// File metadata retrieval handler
+#[debug_handler(state = AppStateData)]
+pub async fn file_retrieve_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    Path(file_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // Get file from the provider
+    let file_object = openai_provider
+        .get_file(
+            &file_id,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Return the file object as response
+    let body = serde_json::to_string(&file_object).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize file object: {e}"),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
+}
+
+/// File content download handler
+#[debug_handler(state = AppStateData)]
+pub async fn file_content_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    Path(file_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // Get file metadata first to get the filename
+    let file_object = openai_provider
+        .get_file(
+            &file_id,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Get file content from the provider
+    let file_content = openai_provider
+        .get_file_content(
+            &file_id,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Create response with appropriate headers
+    let response = Response::builder()
+        .header("content-type", "application/jsonl")
+        .header(
+            "content-disposition",
+            format!("attachment; filename=\"{}\"", file_object.filename),
+        )
+        .header("content-length", file_content.len().to_string())
+        .body(Body::from(file_content))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InvalidRequest {
+                message: format!("Failed to create response: {e}"),
+            })
+        })?;
+
+    Ok(response)
+}
+
+/// File deletion handler
+#[debug_handler(state = AppStateData)]
+pub async fn file_delete_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    Path(file_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // Delete the file from the provider
+    let file_object = openai_provider
+        .delete_file(
+            &file_id,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Create deletion response object
+    let delete_response = serde_json::json!({
+        "id": file_object.id,
+        "object": "file",
+        "deleted": true
+    });
+
+    let response = Json(delete_response).into_response();
+    Ok(response)
+}
+
+/// Batch creation handler for OpenAI Batch API
+#[debug_handler(state = AppStateData)]
+pub async fn batch_create_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    Json(request): Json<OpenAIBatchCreateRequest>,
+) -> Result<Response<Body>, Error> {
+    // Validate the batch creation request
+    validate_batch_create_request(&request)?;
+
+    tracing::info!("Batch creation request validated successfully");
+
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // Validate endpoint
+    match request.endpoint.as_str() {
+        "/v1/chat/completions" | "/v1/embeddings" => {
+            // Valid endpoints
+        }
+        _ => {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Unsupported endpoint for batch processing: {}",
+                    request.endpoint
+                ),
+            }));
+        }
+    }
+
+    // Create batch with the provider
+    let batch_object = openai_provider
+        .create_batch(
+            request.input_file_id,
+            request.endpoint,
+            request.completion_window,
+            request.metadata,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Return the batch object as response
+    let body = serde_json::to_string(&batch_object).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize batch object: {e}"),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
+}
+
+/// Batch retrieval handler for OpenAI Batch API
+#[debug_handler(state = AppStateData)]
+pub async fn batch_retrieve_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    Path(batch_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // Get batch status from the provider
+    let batch_object = openai_provider
+        .get_batch(
+            &batch_id,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Return the batch object as response
+    let body = serde_json::to_string(&batch_object).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize batch object: {e}"),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
+}
+
+/// Batch listing handler for OpenAI Batch API
+#[debug_handler(state = AppStateData)]
+pub async fn batch_list_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    Query(params): Query<ListBatchesParams>,
+) -> Result<Response<Body>, Error> {
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // List batches from the provider
+    let list_response = openai_provider
+        .list_batches(
+            params,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Return the list response
+    let body = serde_json::to_string(&list_response).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize list response: {e}"),
+            raw_request: None,
+            raw_response: None,
+            provider_type: "gateway".to_string(),
+        })
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to build response: {e}"),
+                raw_request: None,
+                raw_response: None,
+                provider_type: "gateway".to_string(),
+            })
+        })
+}
+
+/// Batch cancellation handler for OpenAI Batch API
+#[debug_handler(state = AppStateData)]
+pub async fn batch_cancel_handler(
+    State(AppStateData {
+        config: _,
+        http_client,
+        clickhouse_connection_info: _,
+        kafka_connection_info: _,
+        authentication_info: _,
+    }): AppState,
+    _headers: HeaderMap,
+    Path(batch_id): Path<String>,
+) -> Result<Response<Body>, Error> {
+    // Create OpenAI provider directly for batch operations (these are account-level operations)
+    let openai_provider = OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })?;
+
+    // Cancel the batch with the provider
+    let batch_object = openai_provider
+        .cancel_batch(
+            &batch_id,
+            &http_client,
+            &InferenceCredentials::default(),
+        )
+        .await?;
+
+    // Return the batch object as response
+    let body = serde_json::to_string(&batch_object).map_err(|e| {
+        Error::new(ErrorDetails::InferenceServer {
+            message: format!("Failed to serialize batch object: {e}"),
             raw_request: None,
             raw_response: None,
             provider_type: "gateway".to_string(),

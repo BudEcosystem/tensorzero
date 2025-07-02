@@ -12,6 +12,7 @@ pub enum EndpointCapability {
     AudioTranslation,
     TextToSpeech,
     Responses,
+    Batch,
     // Future capabilities can be added here:
     // Completions,
     // Images,
@@ -29,6 +30,7 @@ impl EndpointCapability {
             Self::AudioTranslation => "audio_translation",
             Self::TextToSpeech => "text_to_speech",
             Self::Responses => "responses",
+            Self::Batch => "batch",
         }
     }
 }
