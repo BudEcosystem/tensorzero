@@ -1517,6 +1517,9 @@ impl crate::inference::providers::batch::BatchProvider for DummyProvider {
             },
             metadata: None,
         })
+    }
+}
+
 #[async_trait::async_trait]
 impl crate::realtime::RealtimeSessionProvider for DummyProvider {
     async fn create_session(
