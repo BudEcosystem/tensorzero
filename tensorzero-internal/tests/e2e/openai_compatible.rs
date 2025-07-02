@@ -1419,10 +1419,7 @@ async fn test_openai_compatible_image_generation_with_together() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
     let error_json: Value = response.json().await.unwrap();
-    assert!(error_json["error"]
-        .as_str()
-        .unwrap()
-        .contains("API key"));
+    assert!(error_json["error"].as_str().unwrap().contains("API key"));
 }
 
 #[tokio::test]

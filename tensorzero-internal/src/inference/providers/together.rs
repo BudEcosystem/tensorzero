@@ -1,3 +1,5 @@
+#![allow(clippy::allow_attributes)]
+
 use std::{borrow::Cow, sync::OnceLock, time::Duration};
 
 use futures::StreamExt;
@@ -834,7 +836,7 @@ struct TogetherImageGenerationRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
+#[allow(dead_code)]
 struct TogetherImageResponse {
     id: String,
     model: String,
@@ -845,7 +847,7 @@ struct TogetherImageResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
+#[allow(dead_code)]
 struct TogetherImageData {
     index: u32,
     url: Option<String>,
@@ -858,7 +860,7 @@ struct TogetherImageData {
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
+#[allow(dead_code)]
 struct TogetherImageTimings {
     inference: f64,
 }
