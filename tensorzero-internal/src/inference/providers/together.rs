@@ -935,6 +935,17 @@ impl EmbeddingProvider for TogetherProvider {
     ) -> Result<EmbeddingProviderResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
         let request_body = TogetherEmbeddingRequest::new(&self.model_name, &request.input);
+
+        // Serialize request body once at the beginning
+        let raw_request = serde_json::to_string(&request_body).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing request body as JSON: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
         let request_url = get_embedding_url(&TOGETHER_API_BASE)?;
         let start_time = Instant::now();
 
@@ -944,7 +955,7 @@ impl EmbeddingProvider for TogetherProvider {
             .bearer_auth(api_key.expose_secret());
 
         let res = request_builder
-            .json(&request_body)
+            .body(raw_request.clone())
             .send()
             .await
             .map_err(|e| {
@@ -955,19 +966,20 @@ impl EmbeddingProvider for TogetherProvider {
                         DisplayOrDebugGateway::new(e)
                     ),
                     provider_type: PROVIDER_TYPE.to_string(),
-                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_request: Some(raw_request.clone()),
                     raw_response: None,
                 })
             })?;
 
-        if res.status().is_success() {
+        let status = res.status();
+        if status.is_success() {
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
                         "Error parsing text response: {}",
                         DisplayOrDebugGateway::new(e)
                     ),
-                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_request: Some(raw_request.clone()),
                     raw_response: None,
                     provider_type: PROVIDER_TYPE.to_string(),
                 })
@@ -980,7 +992,7 @@ impl EmbeddingProvider for TogetherProvider {
                             "Error parsing JSON response: {}",
                             DisplayOrDebugGateway::new(e)
                         ),
-                        raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                        raw_request: Some(raw_request.clone()),
                         raw_response: Some(raw_response.clone()),
                         provider_type: PROVIDER_TYPE.to_string(),
                     })
@@ -996,15 +1008,6 @@ impl EmbeddingProvider for TogetherProvider {
                 .map(|data| data.embedding)
                 .collect();
 
-            let raw_request = serde_json::to_string(&request_body).map_err(|e| {
-                Error::new(ErrorDetails::Serialization {
-                    message: format!(
-                        "Error serializing request body as JSON: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                })
-            })?;
-
             let usage = Usage::from(response.usage);
 
             Ok(EmbeddingProviderResponse::new(
@@ -1016,20 +1019,19 @@ impl EmbeddingProvider for TogetherProvider {
                 latency,
             ))
         } else {
-            let status = res.status();
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
                     message: format!(
                         "Error parsing error response: {}",
                         DisplayOrDebugGateway::new(e)
                     ),
-                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_request: Some(raw_request.clone()),
                     raw_response: None,
                     provider_type: PROVIDER_TYPE.to_string(),
                 })
             })?;
             Err(handle_openai_error(
-                &serde_json::to_string(&request_body).unwrap_or_default(),
+                &raw_request,
                 status,
                 &raw_response,
                 PROVIDER_TYPE,

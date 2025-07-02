@@ -52,7 +52,7 @@ impl ShorthandModelConfig for EmbeddingModelConfig {
                 EmbeddingProviderConfig::VLLM(VLLMProvider::new(model_name, default_url, None)?)
             }
             "together" => {
-                EmbeddingProviderConfig::Together(TogetherProvider::new(model_name, None, true)?)
+                EmbeddingProviderConfig::Together(TogetherProvider::new(model_name, None, false)?)
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             "dummy" => EmbeddingProviderConfig::Dummy(DummyProvider::new(model_name, None)?),
