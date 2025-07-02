@@ -3839,7 +3839,7 @@ fn create_batch_provider() -> Result<Box<dyn BatchProvider>, Error> {
                 message: format!("Failed to create Dummy provider for batch operations: {e}"),
             })
         })?;
-        return Ok(Box::new(dummy_provider));
+        Ok(Box::new(dummy_provider))
     }
 
     #[cfg(not(feature = "e2e_tests"))]
@@ -3874,7 +3874,7 @@ fn openai_error_response(error: Error) -> Response<Body> {
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(Body::from("Internal server error"))
-                .unwrap()
+                .unwrap_or_else(|_| Response::new(Body::from("Internal server error")))
         })
 }
 
