@@ -1,0 +1,189 @@
+# Unified CI configuration showing OpenAI SDK universal compatibility
+# Demonstrates that OpenAI SDK works with ALL providers through /v1/chat/completions
+# Uses dummy providers for predictable responses without requiring real API keys
+
+[gateway]
+bind_address = "0.0.0.0:3001"
+debug = true
+
+[gateway.authentication]
+enabled = false
+
+[gateway.observability]
+enabled = false
+
+# === OpenAI SDK Universal Compatibility ===
+# These models can ALL be used with OpenAI SDK through /v1/chat/completions
+
+# OpenAI Models - native OpenAI SDK usage
+[models."gpt-3.5-turbo"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."gpt-3.5-turbo".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."gpt-4"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."gpt-4".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."gpt-4-turbo"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."gpt-4-turbo".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."text-embedding-ada-002"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."text-embedding-ada-002".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."text-embedding-3-small"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."text-embedding-3-small".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."text-embedding-3-large"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."text-embedding-3-large".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."text-moderation-latest"]
+routing = ["dummy"]
+endpoints = ["moderation"]
+
+[models."text-moderation-latest".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."omni-moderation-latest"]
+routing = ["dummy"]
+endpoints = ["moderation"]
+
+[models."omni-moderation-latest".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."whisper-1"]
+routing = ["dummy"]
+endpoints = ["audio_transcription", "audio_translation"]
+
+[models."whisper-1".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."tts-1"]
+routing = ["dummy"]
+endpoints = ["text_to_speech"]
+
+[models."tts-1".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."tts-1-hd"]
+routing = ["dummy"]
+endpoints = ["text_to_speech"]
+
+[models."tts-1-hd".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."dall-e-2"]
+routing = ["dummy"]
+endpoints = ["image_generation", "image_edit", "image_variation"]
+
+[models."dall-e-2".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."dall-e-3"]
+routing = ["dummy"]
+endpoints = ["image_generation"]
+
+[models."dall-e-3".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."gpt-image-1"]
+routing = ["dummy"]
+endpoints = ["image_generation", "image_edit"]
+
+[models."gpt-image-1".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+# === Anthropic Models - Universal OpenAI SDK Compatibility ===  
+# These Anthropic models work perfectly with OpenAI SDK through /v1/chat/completions
+# This demonstrates universal compatibility: one SDK, all providers!
+
+[models."claude-3-haiku-20240307"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."claude-3-haiku-20240307".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."claude-3-sonnet-20240229"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."claude-3-sonnet-20240229".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."claude-3-opus-20240229"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."claude-3-opus-20240229".providers.dummy]
+type = "dummy"
+model_name = "json"
+
+[models."claude-3-5-sonnet-20241022"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."claude-3-5-sonnet-20241022".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."claude-3-5-haiku-20241022"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."claude-3-5-haiku-20241022".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."claude-2.1"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."claude-2.1".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."claude-instant-1.2"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."claude-instant-1.2".providers.dummy]
+type = "dummy"
+model_name = "test"

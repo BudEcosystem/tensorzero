@@ -217,6 +217,10 @@ async fn main() {
             post(endpoints::openai_compatible::inference_handler),
         )
         .route(
+            "/v1/messages",
+            post(endpoints::openai_compatible::anthropic_messages_handler),
+        )
+        .route(
             "/v1/embeddings",
             post(endpoints::openai_compatible::embedding_handler),
         )

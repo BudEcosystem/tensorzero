@@ -323,7 +323,7 @@ jobs:
         
       - name: Launch the gateway for SDK tests
         run: |
-          cargo run --release --bin gateway --features e2e_tests -- --config-file gateway/tests/sdk/test_config_ci.toml > sdk_gateway_logs.txt 2>&1 &
+          cargo run --release --bin gateway --features e2e_tests -- --config-file gateway/tests/sdk/test_config_unified_ci.toml > sdk_gateway_logs.txt 2>&1 &
           GATEWAY_PID=$!
           echo "GATEWAY_PID=$GATEWAY_PID" >> $GITHUB_ENV
           
@@ -345,8 +345,14 @@ jobs:
       - name: Run SDK integration tests
         run: |
           cd gateway/tests/sdk
-          # Use the CI-specific test runner script
-          ./run_tests_ci.sh
+          # Run all CI tests including universal SDK tests
+          ./run_tests.sh --mode ci
+          
+      - name: Run Universal SDK compatibility tests
+        run: |
+          cd gateway/tests/sdk
+          # Run universal SDK tests specifically
+          ./run_tests.sh --provider universal
           
       - name: Print gateway logs
         if: always()
