@@ -2721,20 +2721,27 @@ pub async fn image_generation_handler(
         })
     })?;
 
-    let model = models
+    let model = match models
         .get_with_capability(
             model_name,
             crate::endpoints::capability::EndpointCapability::ImageGeneration,
         )
-        .await?
-        .ok_or_else(|| {
-            Error::new(ErrorDetails::Config {
-                message: format!(
-                    "Model '{}' not found or does not support image generation",
-                    model_resolution.original_model_name
-                ),
-            })
-        })?;
+        .await
+    {
+        Ok(Some(model)) => model,
+        Ok(None) => {
+            // Model doesn't exist - return 404 using RouteNotFound
+            return Err(Error::new(ErrorDetails::RouteNotFound {
+                path: "/v1/images/generations".to_string(),
+                method: "POST".to_string(),
+            }));
+        }
+        Err(e) => {
+            // Model exists but doesn't support image generation (or other errors)
+            // This will return BAD_REQUEST for CapabilityNotSupported
+            return Err(e);
+        }
+    };
 
     // Convert parameters to internal format
     let size = params.size.as_deref().map(str::parse).transpose()?;

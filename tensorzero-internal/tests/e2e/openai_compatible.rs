@@ -49,7 +49,7 @@ async fn test_openai_compatible_route_with_function_name_asmodel(model: &str) {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("episode_id", episode_id.to_string())
         .json(&payload)
         .send()
@@ -183,7 +183,7 @@ async fn test_openai_compatible_matches_response_fields() {
     });
 
     let tensorzero_response_fut = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .json(&tensorzero_payload)
         .send();
 
@@ -243,7 +243,7 @@ async fn test_openai_compatible_dryrun() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .json(&payload)
         .send()
         .await
@@ -323,7 +323,7 @@ async fn test_openai_compatible_route_with_default_function(
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("episode_id", episode_id.to_string())
         .json(&payload)
         .send()
@@ -448,7 +448,7 @@ async fn test_openai_compatible_route_bad_model_name() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("episode_id", episode_id.to_string())
         .json(&payload)
         .send()
@@ -486,7 +486,7 @@ async fn test_openai_compatible_route_with_json_mode_on() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("episode_id", episode_id.to_string())
         .json(&payload)
         .send()
@@ -620,7 +620,7 @@ async fn test_openai_compatible_route_with_json_schema() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("episode_id", episode_id.to_string())
         .json(&payload)
         .send()
@@ -781,7 +781,7 @@ async fn test_openai_compatible_streaming_tool_call() {
     });
 
     let mut response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("Content-Type", "application/json")
         .header("X-Episode-Id", episode_id.to_string())
         .json(&body)
@@ -898,7 +898,7 @@ async fn test_openai_compatible_streaming() {
     });
 
     let mut response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("Content-Type", "application/json")
         .header("X-Episode-Id", episode_id.to_string())
         .json(&body)
@@ -972,7 +972,7 @@ async fn test_openai_compatible_logprobs_true_non_stream() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("Content-Type", "application/json")
         .header("X-Episode-Id", episode_id.to_string())
         .json(&body)
@@ -1004,7 +1004,7 @@ async fn test_openai_compatible_logprobs_true_stream() {
     });
 
     let mut response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("Content-Type", "application/json")
         .header("X-Episode-Id", episode_id.to_string())
         .json(&body)
@@ -1039,7 +1039,7 @@ async fn test_openai_compatible_logprobs_false_should_work() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("Content-Type", "application/json")
         .header("X-Episode-Id", episode_id.to_string())
         .json(&body)
@@ -1063,7 +1063,7 @@ async fn test_openai_compatible_logprobs_numeric_should_error() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/chat/completions"))
+        .post(get_gateway_endpoint("/v1/chat/completions"))
         .header("Content-Type", "application/json")
         .header("X-Episode-Id", episode_id.to_string())
         .json(&body)
@@ -1084,7 +1084,7 @@ async fn test_openai_compatible_embeddings_route() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1132,7 +1132,7 @@ async fn test_openai_compatible_embeddings_route_with_model_prefix() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1167,7 +1167,7 @@ async fn test_openai_compatible_embeddings_route_with_cache_options() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1192,7 +1192,7 @@ async fn test_openai_compatible_embeddings_route_invalid_model() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1219,7 +1219,7 @@ async fn test_openai_compatible_embeddings_route_batch_support() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1267,7 +1267,7 @@ async fn test_openai_compatible_embeddings_route_empty_batch() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1297,7 +1297,7 @@ async fn test_openai_compatible_embeddings_route_with_unknown_fields() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1323,7 +1323,7 @@ async fn test_openai_compatible_embeddings_route_with_header_model() {
     });
 
     let response = client
-        .post(get_gateway_endpoint("/openai/v1/embeddings"))
+        .post(get_gateway_endpoint("/v1/embeddings"))
         .header("Content-Type", "application/json")
         .header("x-tensorzero-original-model", "text-embedding-3-small")
         .json(&payload)
@@ -1336,4 +1336,150 @@ async fn test_openai_compatible_embeddings_route_with_header_model() {
     let response_json: Value = response.json().await.unwrap();
     // Should use the model from header
     assert_eq!(response_json["model"], "text-embedding-3-small");
+}
+
+#[tokio::test]
+async fn test_openai_compatible_image_generation() {
+    let client = Client::new();
+
+    // Test basic image generation with dummy provider
+    let payload = json!({
+        "model": "image-generation-test",
+        "prompt": "A beautiful sunset over mountains",
+        "n": 1,
+        "size": "1024x1024",
+        "response_format": "url"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response_json: Value = response.json().await.unwrap();
+
+    // Verify response structure
+    assert!(response_json["created"].is_u64());
+    assert!(response_json["data"].is_array());
+    assert_eq!(response_json["data"].as_array().unwrap().len(), 1);
+
+    let image_data = &response_json["data"][0];
+    assert!(image_data["url"].is_string() || image_data["b64_json"].is_string());
+
+    // Test with multiple images
+    let payload_multiple = json!({
+        "model": "image-generation-test",
+        "prompt": "Multiple views of a cityscape",
+        "n": 2,
+        "size": "512x512",
+        "response_format": "b64_json"
+    });
+
+    let response_multiple = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload_multiple)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_multiple.status(), StatusCode::OK);
+
+    let response_multiple_json: Value = response_multiple.json().await.unwrap();
+    assert_eq!(response_multiple_json["data"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn test_openai_compatible_image_generation_with_together() {
+    let client = Client::new();
+
+    // Test Together provider with FLUX model
+    let payload = json!({
+        "model": "flux-schnell",
+        "prompt": "A futuristic city with flying cars",
+        "n": 1,
+        "size": "1024x1024",
+        "response_format": "url"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    // Since we don't have actual Together API key in tests, this should fail with auth error
+    // But it validates that the routing works correctly
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let error_json: Value = response.json().await.unwrap();
+    assert!(error_json["error"].as_str().unwrap().contains("API key"));
+}
+
+#[tokio::test]
+async fn test_openai_compatible_image_generation_errors() {
+    let client = Client::new();
+
+    // Test with non-existent model
+    let payload = json!({
+        "model": "non-existent-model",
+        "prompt": "Test prompt",
+        "n": 1,
+        "size": "1024x1024"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Test with model that doesn't support image generation
+    let payload_wrong_capability = json!({
+        "model": "gpt-4o-mini-2024-07-18",
+        "prompt": "Test prompt",
+        "n": 1,
+        "size": "1024x1024"
+    });
+
+    let response_wrong_capability = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload_wrong_capability)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_wrong_capability.status(), StatusCode::BAD_REQUEST);
+
+    let error_json: Value = response_wrong_capability.json().await.unwrap();
+    assert!(error_json["error"]
+        .as_str()
+        .unwrap()
+        .contains("does not support"));
+
+    // Test with invalid parameters
+    let payload_invalid = json!({
+        "model": "image-generation-test",
+        "prompt": "Test prompt",
+        "n": 11,  // Too many images
+        "size": "1024x1024"
+    });
+
+    let response_invalid = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload_invalid)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_invalid.status(), StatusCode::BAD_REQUEST);
 }
