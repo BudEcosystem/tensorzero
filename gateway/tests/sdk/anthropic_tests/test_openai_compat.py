@@ -1,7 +1,7 @@
 """Test Anthropic models through OpenAI-compatible endpoint.
 
-This is a temporary solution until /v1/messages endpoint is implemented.
-Anthropic models can be accessed through the OpenAI-compatible /v1/chat/completions endpoint.
+This file tests the universal SDK architecture, ensuring that Anthropic models can be
+accessed via the OpenAI-compatible /v1/chat/completions endpoint.
 """
 
 import os

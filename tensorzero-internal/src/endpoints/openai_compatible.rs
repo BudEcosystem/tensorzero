@@ -5056,8 +5056,10 @@ pub struct AnthropicMessagesParams {
     /// Tool choice configuration.
     tool_choice: Option<AnthropicToolChoice>,
     /// Metadata about the request.
+    #[expect(dead_code)]
     metadata: Option<AnthropicMetadata>,
     /// The top K tokens to sample from.
+    #[expect(dead_code)]
     top_k: Option<u32>,
     /// A unique identifier representing your end-user.
     user_id: Option<String>,
@@ -5094,10 +5096,21 @@ enum AnthropicContent {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 enum AnthropicContentBlock {
-    Text { text: String },
-    Image { source: AnthropicImageSource },
-    ToolUse { id: String, name: String, input: Value },
-    ToolResult { tool_use_id: String, content: AnthropicContent },
+    Text {
+        text: String,
+    },
+    Image {
+        source: AnthropicImageSource,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: AnthropicContent,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -5125,6 +5138,7 @@ enum AnthropicToolChoice {
 
 #[derive(Clone, Debug, Deserialize)]
 struct AnthropicMetadata {
+    #[expect(dead_code)]
     user_id: Option<String>,
 }
 
@@ -5138,10 +5152,7 @@ pub async fn anthropic_messages_handler(
     if !anthropic_params.unknown_fields.is_empty() {
         tracing::warn!(
             "Ignoring unknown fields in Anthropic Messages request: {:?}",
-            anthropic_params
-                .unknown_fields
-                .keys()
-                .collect::<Vec<_>>()
+            anthropic_params.unknown_fields.keys().collect::<Vec<_>>()
         );
     }
 
@@ -5149,12 +5160,8 @@ pub async fn anthropic_messages_handler(
     let openai_params = convert_anthropic_to_openai(anthropic_params)?;
 
     // Call the existing inference handler with converted parameters
-    let response = inference_handler(
-        State(app_state),
-        headers,
-        StructuredJson(openai_params),
-    )
-    .await?;
+    let response =
+        inference_handler(State(app_state), headers, StructuredJson(openai_params)).await?;
 
     // Convert the response from OpenAI format to Anthropic format
     convert_openai_response_to_anthropic(response).await
@@ -5168,9 +5175,11 @@ fn convert_anthropic_to_openai(
 
     // Add system message if present
     if let Some(system) = anthropic_params.system {
-        messages.push(OpenAICompatibleMessage::System(OpenAICompatibleSystemMessage {
-            content: Value::String(system),
-        }));
+        messages.push(OpenAICompatibleMessage::System(
+            OpenAICompatibleSystemMessage {
+                content: Value::String(system),
+            },
+        ));
     }
 
     // Convert messages
@@ -5184,10 +5193,12 @@ fn convert_anthropic_to_openai(
             }
             AnthropicMessage::Assistant { content } => {
                 let content_value = convert_anthropic_content_to_value(content)?;
-                messages.push(OpenAICompatibleMessage::Assistant(OpenAICompatibleAssistantMessage {
-                    content: Some(content_value),
-                    tool_calls: None,
-                }));
+                messages.push(OpenAICompatibleMessage::Assistant(
+                    OpenAICompatibleAssistantMessage {
+                        content: Some(content_value),
+                        tool_calls: None,
+                    },
+                ));
             }
         }
     }
@@ -5206,16 +5217,14 @@ fn convert_anthropic_to_openai(
     });
 
     // Convert tool choice
-    let tool_choice = anthropic_params.tool_choice.map(|choice| {
-        match choice {
-            AnthropicToolChoice::Auto => ChatCompletionToolChoiceOption::Auto,
-            AnthropicToolChoice::Any => ChatCompletionToolChoiceOption::Required,
-            AnthropicToolChoice::Tool { name } => {
-                ChatCompletionToolChoiceOption::Named(OpenAICompatibleNamedToolChoice {
-                    r#type: "function".to_string(),
-                    function: FunctionName { name },
-                })
-            }
+    let tool_choice = anthropic_params.tool_choice.map(|choice| match choice {
+        AnthropicToolChoice::Auto => ChatCompletionToolChoiceOption::Auto,
+        AnthropicToolChoice::Any => ChatCompletionToolChoiceOption::Required,
+        AnthropicToolChoice::Tool { name } => {
+            ChatCompletionToolChoiceOption::Named(OpenAICompatibleNamedToolChoice {
+                r#type: "function".to_string(),
+                function: FunctionName { name },
+            })
         }
     });
 
@@ -5274,8 +5283,8 @@ fn convert_anthropic_content_to_value(content: AnthropicContent) -> Result<Value
                     }
                 })
                 .collect();
-            
-            converted_blocks.map(|blocks| Value::Array(blocks))
+
+            converted_blocks.map(Value::Array)
         }
     }
 }
@@ -5285,9 +5294,11 @@ async fn convert_openai_response_to_anthropic(
     response: Response<Body>,
 ) -> Result<Response<Body>, Error> {
     let (parts, body) = response.into_parts();
-    
+
     // Check if this is a streaming response
-    if parts.headers.get("content-type")
+    if parts
+        .headers
+        .get("content-type")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.contains("text/event-stream"))
         .unwrap_or(false)
@@ -5295,28 +5306,35 @@ async fn convert_openai_response_to_anthropic(
         // Handle streaming response
         let stream = body.into_data_stream();
         let anthropic_stream = stream.map(|chunk| {
-            chunk.and_then(|bytes| {
+            chunk.map(|bytes| {
                 // Parse the SSE data
                 let data = String::from_utf8_lossy(&bytes);
                 if let Some(json_str) = data.strip_prefix("data: ") {
                     if json_str.trim() == "[DONE]" {
-                        Ok(axum::body::Bytes::from("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+                        axum::body::Bytes::from(
+                            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                        )
                     } else {
                         // Parse OpenAI chunk and convert to Anthropic format
                         match serde_json::from_str::<Value>(json_str) {
                             Ok(openai_chunk) => {
-                                let anthropic_event = convert_openai_chunk_to_anthropic(openai_chunk);
-                                let event_data = serde_json::to_string(&anthropic_event).unwrap_or_default();
-                                Ok(axum::body::Bytes::from(format!("event: {}\ndata: {}\n\n", 
-                                    anthropic_event["type"].as_str().unwrap_or("content_block_delta"),
+                                let anthropic_event =
+                                    convert_openai_chunk_to_anthropic(openai_chunk);
+                                let event_data =
+                                    serde_json::to_string(&anthropic_event).unwrap_or_default();
+                                axum::body::Bytes::from(format!(
+                                    "event: {}\ndata: {}\n\n",
+                                    anthropic_event["type"]
+                                        .as_str()
+                                        .unwrap_or("content_block_delta"),
                                     event_data
-                                )))
+                                ))
                             }
-                            Err(_) => Ok(bytes)
+                            Err(_) => bytes,
                         }
                     }
                 } else {
-                    Ok(bytes)
+                    bytes
                 }
             })
         });
@@ -5325,31 +5343,34 @@ async fn convert_openai_response_to_anthropic(
         Ok(Response::from_parts(parts, body))
     } else {
         // Handle non-streaming response
-        let bytes = axum::body::to_bytes(body, usize::MAX).await
-            .map_err(|e| Error::new(ErrorDetails::InferenceServer {
-                message: format!("Failed to read response body: {}", e),
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to read response body: {e}"),
                 provider_type: "anthropic_compat".to_string(),
                 raw_request: None,
                 raw_response: None,
-            }))?;
+            })
+        })?;
 
-        let openai_response: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::new(ErrorDetails::InferenceServer {
-                message: format!("Failed to parse OpenAI response: {}", e),
+        let openai_response: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to parse OpenAI response: {e}"),
                 provider_type: "anthropic_compat".to_string(),
                 raw_request: None,
                 raw_response: Some(String::from_utf8_lossy(&bytes).to_string()),
-            }))?;
+            })
+        })?;
 
         let anthropic_response = convert_openai_completion_to_anthropic(openai_response)?;
-        
-        let response_bytes = serde_json::to_vec(&anthropic_response)
-            .map_err(|e| Error::new(ErrorDetails::InferenceServer {
-                message: format!("Failed to serialize Anthropic response: {}", e),
+
+        let response_bytes = serde_json::to_vec(&anthropic_response).map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to serialize Anthropic response: {e}"),
                 provider_type: "anthropic_compat".to_string(),
                 raw_request: None,
                 raw_response: None,
-            }))?;
+            })
+        })?;
 
         let body = Body::from(response_bytes);
         Ok(Response::from_parts(parts, body))
@@ -5358,27 +5379,64 @@ async fn convert_openai_response_to_anthropic(
 
 /// Convert OpenAI completion response to Anthropic format
 fn convert_openai_completion_to_anthropic(openai_response: Value) -> Result<Value, Error> {
-    let choice = openai_response["choices"][0].as_object()
-        .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+    let choice = openai_response["choices"][0].as_object().ok_or_else(|| {
+        Error::new(ErrorDetails::InferenceServer {
             message: "No choices in OpenAI response".to_string(),
             provider_type: "anthropic_compat".to_string(),
             raw_request: None,
             raw_response: Some(openai_response.to_string()),
-        }))?;
+        })
+    })?;
 
-    let message = choice["message"].as_object()
-        .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+    let message = choice["message"].as_object().ok_or_else(|| {
+        Error::new(ErrorDetails::InferenceServer {
             message: "No message in choice".to_string(),
             provider_type: "anthropic_compat".to_string(),
             raw_request: None,
             raw_response: Some(openai_response.to_string()),
-        }))?;
+        })
+    })?;
 
-    let content = message.get("content")
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
+    // Build content array
+    let mut content_blocks = Vec::new();
 
-    let finish_reason = choice.get("finish_reason")
+    // Add text content if present
+    if let Some(text_content) = message.get("content").and_then(|c| c.as_str()) {
+        if !text_content.is_empty() {
+            content_blocks.push(json!({
+                "type": "text",
+                "text": text_content
+            }));
+        }
+    }
+
+    // Add tool calls if present
+    if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+        for tool_call in tool_calls {
+            if let Some(function) = tool_call.get("function") {
+                content_blocks.push(json!({
+                    "type": "tool_use",
+                    "id": tool_call.get("id").and_then(|id| id.as_str()).unwrap_or(""),
+                    "name": function.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                    "input": function.get("arguments")
+                        .and_then(|args| args.as_str())
+                        .and_then(|args_str| serde_json::from_str::<Value>(args_str).ok())
+                        .unwrap_or(json!({}))
+                }));
+            }
+        }
+    }
+
+    // If no content blocks were added, add an empty text block
+    if content_blocks.is_empty() {
+        content_blocks.push(json!({
+            "type": "text",
+            "text": ""
+        }));
+    }
+
+    let finish_reason = choice
+        .get("finish_reason")
         .and_then(|r| r.as_str())
         .unwrap_or("stop");
 
@@ -5397,10 +5455,7 @@ fn convert_openai_completion_to_anthropic(openai_response: Value) -> Result<Valu
         "id": openai_response["id"],
         "type": "message",
         "role": "assistant",
-        "content": [{
-            "type": "text",
-            "text": content
-        }],
+        "content": content_blocks,
         "model": openai_response["model"],
         "stop_reason": stop_reason,
         "stop_sequence": null,
@@ -5414,6 +5469,7 @@ fn convert_openai_completion_to_anthropic(openai_response: Value) -> Result<Valu
 /// Convert OpenAI streaming chunk to Anthropic format
 fn convert_openai_chunk_to_anthropic(openai_chunk: Value) -> Value {
     if let Some(delta) = openai_chunk["choices"][0]["delta"].as_object() {
+        // Check for text content
         if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
             json!({
                 "type": "content_block_delta",
@@ -5423,7 +5479,70 @@ fn convert_openai_chunk_to_anthropic(openai_chunk: Value) -> Value {
                     "text": content
                 }
             })
+        }
+        // Check for tool calls
+        else if let Some(tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
+            if let Some(tool_call) = tool_calls.first() {
+                let index = tool_call.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
+
+                // Check if this is the start of a new tool call
+                if tool_call.get("id").is_some() {
+                    let empty_obj = json!({});
+                    let function = tool_call.get("function").unwrap_or(&empty_obj);
+                    json!({
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": tool_call.get("id").and_then(|id| id.as_str()).unwrap_or(""),
+                            "name": function.get("name").and_then(|n| n.as_str()).unwrap_or("")
+                        }
+                    })
+                } else {
+                    // This is a continuation of arguments
+                    let empty_obj = json!({});
+                    let function = tool_call.get("function").unwrap_or(&empty_obj);
+                    if let Some(arguments) = function.get("arguments").and_then(|a| a.as_str()) {
+                        json!({
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": arguments
+                            }
+                        })
+                    } else {
+                        // Empty delta
+                        json!({
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": {
+                                "type": "input_json_delta",
+                                "partial_json": ""
+                            }
+                        })
+                    }
+                }
+            } else {
+                // Empty delta
+                json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "text_delta",
+                        "text": ""
+                    }
+                })
+            }
+        }
+        // Check for finish_reason (indicating end of content block)
+        else if delta.get("finish_reason").is_some() {
+            json!({
+                "type": "content_block_stop",
+                "index": 0
+            })
         } else {
+            // Empty delta
             json!({
                 "type": "content_block_delta",
                 "index": 0,
@@ -5434,14 +5553,15 @@ fn convert_openai_chunk_to_anthropic(openai_chunk: Value) -> Value {
             })
         }
     } else {
+        // This is the start of a new message
         json!({
             "type": "message_start",
             "message": {
-                "id": openai_chunk["id"],
+                "id": openai_chunk.get("id").and_then(|id| id.as_str()).unwrap_or(""),
                 "type": "message",
                 "role": "assistant",
                 "content": [],
-                "model": openai_chunk["model"],
+                "model": openai_chunk.get("model").and_then(|m| m.as_str()).unwrap_or(""),
                 "usage": {
                     "input_tokens": 0,
                     "output_tokens": 0

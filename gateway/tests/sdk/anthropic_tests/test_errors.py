@@ -56,7 +56,8 @@ class TestAnthropicErrors(BaseSDKTest):
         client = self.get_client()
         
         # Missing max_tokens (required for Anthropic)
-        with pytest.raises(Exception) as exc_info:
+        # This should raise TypeError from SDK validation before making request
+        with pytest.raises(TypeError) as exc_info:
             client.messages.create(
                 model="claude-3-haiku-20240307",
                 messages=[{"role": "user", "content": "Hello"}]
@@ -71,15 +72,16 @@ class TestAnthropicErrors(BaseSDKTest):
         """Test invalid message format."""
         client = self.get_client()
         
-        # Test with invalid role
-        with pytest.raises(Exception) as exc_info:
+        # Test with invalid role - should get APIStatusError from gateway
+        with pytest.raises(APIStatusError) as exc_info:
             client.messages.create(
                 model="claude-3-haiku-20240307",
                 messages=[{"role": "system", "content": "You are helpful"}],  # system role not allowed in messages
                 max_tokens=50
             )
         
-        # Should get validation error
+        # Should get validation error with 400 status
+        assert exc_info.value.status_code == 400
         error_str = str(exc_info.value).lower()
         assert "role" in error_str or "system" in error_str or "invalid" in error_str
     
@@ -87,14 +89,15 @@ class TestAnthropicErrors(BaseSDKTest):
         """Test with empty messages array."""
         client = self.get_client()
         
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(APIStatusError) as exc_info:
             client.messages.create(
                 model="claude-3-haiku-20240307",
                 messages=[],
                 max_tokens=50
             )
         
-        # Should require at least one message
+        # Should get validation error with 400 status
+        assert exc_info.value.status_code == 400
         error_str = str(exc_info.value).lower()
         assert "message" in error_str or "empty" in error_str or "required" in error_str
     
@@ -139,7 +142,8 @@ class TestAnthropicErrors(BaseSDKTest):
             # Missing required fields like description and input_schema
         }]
         
-        with pytest.raises(Exception) as exc_info:
+        # Could be ValueError from SDK or APIStatusError from gateway
+        with pytest.raises((ValueError, APIStatusError)) as exc_info:
             client.messages.create(
                 model="claude-3-5-sonnet-20241022",
                 messages=[{"role": "user", "content": "Use the tool"}],

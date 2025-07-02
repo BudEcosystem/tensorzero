@@ -184,11 +184,7 @@ run_provider_tests() {
         return 1
     fi
     
-    # Create test images if needed (for OpenAI)
-    if [ "$provider" == "openai" ]; then
-        echo -e "${YELLOW}Setting up test images...${NC}"
-        python create_test_images.py
-    fi
+    # Note: Test images are created automatically by the test files themselves
     
     # Determine which tests to run
     local test_dir="${provider}_tests/"
