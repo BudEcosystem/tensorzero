@@ -198,16 +198,10 @@ impl Migration for Migration0031<'_> {
     }
 
     fn rollback_instructions(&self) -> String {
-        "/* Revert the status enum back to original values */\
-            ALTER TABLE BatchRequest ADD COLUMN status_old Enum('pending' = 1, 'completed' = 2, 'failed' = 3) DEFAULT 'pending';\
-            ALTER TABLE BatchRequest UPDATE status_old = CASE \
-                WHEN status IN ('validating', 'in_progress', 'finalizing') THEN 'pending' \
-                WHEN status = 'completed' THEN 'completed' \
-                WHEN status IN ('failed', 'expired', 'cancelled') THEN 'failed' \
-                ELSE status \
-            END WHERE 1 = 1;\
-            ALTER TABLE BatchRequest DROP COLUMN status;\
-            ALTER TABLE BatchRequest RENAME COLUMN status_old TO status;"
+        "ALTER TABLE BatchRequest ADD COLUMN status_old Enum('pending' = 1, 'completed' = 2, 'failed' = 3) DEFAULT 'pending'
+ALTER TABLE BatchRequest UPDATE status_old = CASE WHEN status IN ('validating', 'in_progress', 'finalizing') THEN 'pending' WHEN status = 'completed' THEN 'completed' WHEN status IN ('failed', 'expired', 'cancelled') THEN 'failed' ELSE status END WHERE 1 = 1
+ALTER TABLE BatchRequest DROP COLUMN status
+ALTER TABLE BatchRequest RENAME COLUMN status_old TO status"
             .to_string()
     }
 }
