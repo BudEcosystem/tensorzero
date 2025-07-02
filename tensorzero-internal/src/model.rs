@@ -2276,13 +2276,27 @@ impl ModelProvider {
         match &self.config {
             ProviderConfig::OpenAI(provider) => {
                 provider
-                    .create_batch(input_file_id, endpoint, completion_window, metadata, client, dynamic_api_keys)
+                    .create_batch(
+                        input_file_id,
+                        endpoint,
+                        completion_window,
+                        metadata,
+                        client,
+                        dynamic_api_keys,
+                    )
                     .await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
                 provider
-                    .create_batch(input_file_id, endpoint, completion_window, metadata, client, dynamic_api_keys)
+                    .create_batch(
+                        input_file_id,
+                        endpoint,
+                        completion_window,
+                        metadata,
+                        client,
+                        dynamic_api_keys,
+                    )
                     .await
             }
             // Other providers don't support batch operations yet
@@ -2305,15 +2319,11 @@ impl ModelProvider {
 
         match &self.config {
             ProviderConfig::OpenAI(provider) => {
-                provider
-                    .get_batch(batch_id, client, dynamic_api_keys)
-                    .await
+                provider.get_batch(batch_id, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
-                provider
-                    .get_batch(batch_id, client, dynamic_api_keys)
-                    .await
+                provider.get_batch(batch_id, client, dynamic_api_keys).await
             }
             // Other providers don't support batch operations yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
@@ -2335,15 +2345,11 @@ impl ModelProvider {
 
         match &self.config {
             ProviderConfig::OpenAI(provider) => {
-                provider
-                    .get_file(file_id, client, dynamic_api_keys)
-                    .await
+                provider.get_file(file_id, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
-                provider
-                    .get_file(file_id, client, dynamic_api_keys)
-                    .await
+                provider.get_file(file_id, client, dynamic_api_keys).await
             }
             // Other providers don't support batch operations yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {

@@ -16,15 +16,13 @@ async fn test_file_upload() {
 {"custom_id": "req-2", "method": "POST", "url": "/v1/chat/completions", "body": {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "World"}]}}"#;
 
     // Create multipart form
-    let form = multipart::Form::new()
-        .text("purpose", "batch")
-        .part(
-            "file",
-            multipart::Part::bytes(jsonl_content.as_bytes().to_vec())
-                .file_name("test_batch.jsonl")
-                .mime_str("application/jsonl")
-                .unwrap(),
-        );
+    let form = multipart::Form::new().text("purpose", "batch").part(
+        "file",
+        multipart::Part::bytes(jsonl_content.as_bytes().to_vec())
+            .file_name("test_batch.jsonl")
+            .mime_str("application/jsonl")
+            .unwrap(),
+    );
 
     let response = client
         .post(get_gateway_endpoint("/v1/files"))
@@ -53,8 +51,7 @@ async fn test_file_upload_missing_file() {
     let client = Client::new();
 
     // Create multipart form without file
-    let form = multipart::Form::new()
-        .text("purpose", "batch");
+    let form = multipart::Form::new().text("purpose", "batch");
 
     let response = client
         .post(get_gateway_endpoint("/v1/files"))
@@ -133,13 +130,16 @@ async fn test_file_content() {
     let file_id = "file-abc123";
 
     let response = client
-        .get(get_gateway_endpoint(&format!("/v1/files/{}/content", file_id)))
+        .get(get_gateway_endpoint(&format!(
+            "/v1/files/{}/content",
+            file_id
+        )))
         .send()
         .await
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    
+
     // Check content type header
     assert_eq!(
         response.headers().get("content-type").unwrap(),
@@ -148,7 +148,7 @@ async fn test_file_content() {
 
     let content = response.text().await.unwrap();
     println!("File content: {content}");
-    
+
     // Verify it's valid JSONL
     for line in content.lines() {
         if !line.trim().is_empty() {
@@ -291,7 +291,7 @@ async fn test_batch_list_with_pagination() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let response_json: Value = response.json().await.unwrap();
-    
+
     assert_eq!(response_json["object"], "list");
     assert!(response_json["data"].is_array());
     assert_eq!(response_json["has_more"], false);
@@ -304,7 +304,10 @@ async fn test_batch_cancel() {
     let batch_id = "batch_abc123";
 
     let response = client
-        .post(get_gateway_endpoint(&format!("/v1/batches/{}/cancel", batch_id)))
+        .post(get_gateway_endpoint(&format!(
+            "/v1/batches/{}/cancel",
+            batch_id
+        )))
         .send()
         .await
         .unwrap();
@@ -326,15 +329,13 @@ async fn test_file_upload_oversized() {
     // Create a file that's too large (over 100MB)
     let large_content = "x".repeat(101 * 1024 * 1024);
 
-    let form = multipart::Form::new()
-        .text("purpose", "batch")
-        .part(
-            "file",
-            multipart::Part::bytes(large_content.into_bytes())
-                .file_name("large.jsonl")
-                .mime_str("application/jsonl")
-                .unwrap(),
-        );
+    let form = multipart::Form::new().text("purpose", "batch").part(
+        "file",
+        multipart::Part::bytes(large_content.into_bytes())
+            .file_name("large.jsonl")
+            .mime_str("application/jsonl")
+            .unwrap(),
+    );
 
     let response = client
         .post(get_gateway_endpoint("/v1/files"))
@@ -386,15 +387,13 @@ async fn test_file_upload_invalid_jsonl() {
     let invalid_jsonl = r#"{"custom_id": "req-1", "method": "POST"
 not valid json"#;
 
-    let form = multipart::Form::new()
-        .text("purpose", "batch")
-        .part(
-            "file",
-            multipart::Part::bytes(invalid_jsonl.as_bytes().to_vec())
-                .file_name("invalid.jsonl")
-                .mime_str("application/jsonl")
-                .unwrap(),
-        );
+    let form = multipart::Form::new().text("purpose", "batch").part(
+        "file",
+        multipart::Part::bytes(invalid_jsonl.as_bytes().to_vec())
+            .file_name("invalid.jsonl")
+            .mime_str("application/jsonl")
+            .unwrap(),
+    );
 
     let response = client
         .post(get_gateway_endpoint("/v1/files"))
@@ -422,7 +421,7 @@ async fn test_concurrent_batch_operations() {
 
     // Create multiple batches concurrently
     let mut handles = vec![];
-    
+
     for i in 0..5 {
         let client = client.clone();
         let handle = tokio::spawn(async move {

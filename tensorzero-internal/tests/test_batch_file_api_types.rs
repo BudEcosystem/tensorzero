@@ -2,7 +2,8 @@
 mod test_batch_file_api_types {
     use std::collections::HashMap;
     use tensorzero_internal::openai_batch::{
-        OpenAIBatchCreateRequest, OpenAIFileObject, ListBatchesParams, OpenAIBatchObject, OpenAIBatchStatus,
+        ListBatchesParams, OpenAIBatchCreateRequest, OpenAIBatchObject, OpenAIBatchStatus,
+        OpenAIFileObject,
     };
 
     #[test]
@@ -42,7 +43,7 @@ mod test_batch_file_api_types {
         assert_eq!(params.endpoint, "/v1/chat/completions");
         assert_eq!(params.completion_window, "24h");
         assert!(params.metadata.is_some());
-        
+
         let metadata = params.metadata.unwrap();
         assert_eq!(metadata["customer_id"], "customer-123");
         assert_eq!(metadata["batch_type"], "daily");

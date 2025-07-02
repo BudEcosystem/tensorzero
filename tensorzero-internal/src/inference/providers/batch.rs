@@ -1,7 +1,9 @@
-use async_trait::async_trait;
-use crate::error::Error;
-use crate::openai_batch::{ListBatchesParams, ListBatchesResponse, OpenAIBatchObject, OpenAIFileObject};
 use crate::endpoints::inference::InferenceCredentials;
+use crate::error::Error;
+use crate::openai_batch::{
+    ListBatchesParams, ListBatchesResponse, OpenAIBatchObject, OpenAIFileObject,
+};
+use async_trait::async_trait;
 
 /// Trait for providers that support batch operations (file upload and batch processing)
 #[async_trait]

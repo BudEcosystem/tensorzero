@@ -53,14 +53,13 @@ use crate::audio::{
 };
 use crate::embeddings::EmbeddingRequest;
 use crate::file_storage::validate_batch_file;
+use crate::inference::providers::batch::BatchProvider;
+use crate::inference::providers::openai::OpenAIProvider;
+use crate::model::CredentialLocation;
 use crate::moderation::ModerationProvider;
 use crate::openai_batch::{
-    validate_batch_create_request, ListBatchesParams,
-    OpenAIBatchCreateRequest,
+    validate_batch_create_request, ListBatchesParams, OpenAIBatchCreateRequest,
 };
-use crate::inference::providers::openai::OpenAIProvider;
-use crate::inference::providers::batch::BatchProvider;
-use crate::model::CredentialLocation;
 use crate::realtime::{RealtimeSessionRequest, RealtimeTranscriptionRequest};
 use std::sync::Arc;
 
@@ -3831,10 +3830,10 @@ fn create_batch_openai_provider() -> Result<OpenAIProvider, Error> {
     // TODO: In the future, this should read from configuration
     // For now, we use the environment variable as per OpenAI's standard
     let credential_location = CredentialLocation::Env("OPENAI_API_KEY".to_string());
-    
+
     OpenAIProvider::new(
         "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
+        None,                // Use default API base
         Some(credential_location),
     )
     .map_err(|e| {
@@ -3978,11 +3977,7 @@ pub async fn file_retrieve_handler(
 
     // Get file from the provider
     let file_object = openai_provider
-        .get_file(
-            &file_id,
-            &http_client,
-            &InferenceCredentials::default(),
-        )
+        .get_file(&file_id, &http_client, &InferenceCredentials::default())
         .await?;
 
     // Return the file object as response
@@ -4026,20 +4021,12 @@ pub async fn file_content_handler(
 
     // Get file metadata first to get the filename
     let file_object = openai_provider
-        .get_file(
-            &file_id,
-            &http_client,
-            &InferenceCredentials::default(),
-        )
+        .get_file(&file_id, &http_client, &InferenceCredentials::default())
         .await?;
 
     // Get file content from the provider
     let file_content = openai_provider
-        .get_file_content(
-            &file_id,
-            &http_client,
-            &InferenceCredentials::default(),
-        )
+        .get_file_content(&file_id, &http_client, &InferenceCredentials::default())
         .await?;
 
     // Create response with appropriate headers
@@ -4078,11 +4065,7 @@ pub async fn file_delete_handler(
 
     // Delete the file from the provider
     let file_object = openai_provider
-        .delete_file(
-            &file_id,
-            &http_client,
-            &InferenceCredentials::default(),
-        )
+        .delete_file(&file_id, &http_client, &InferenceCredentials::default())
         .await?;
 
     // Create deletion response object
@@ -4185,11 +4168,7 @@ pub async fn batch_retrieve_handler(
 
     // Get batch status from the provider
     let batch_object = openai_provider
-        .get_batch(
-            &batch_id,
-            &http_client,
-            &InferenceCredentials::default(),
-        )
+        .get_batch(&batch_id, &http_client, &InferenceCredentials::default())
         .await?;
 
     // Return the batch object as response
@@ -4233,11 +4212,7 @@ pub async fn batch_list_handler(
 
     // List batches from the provider
     let list_response = openai_provider
-        .list_batches(
-            params,
-            &http_client,
-            &InferenceCredentials::default(),
-        )
+        .list_batches(params, &http_client, &InferenceCredentials::default())
         .await?;
 
     // Return the list response
@@ -4281,11 +4256,7 @@ pub async fn batch_cancel_handler(
 
     // Cancel the batch with the provider
     let batch_object = openai_provider
-        .cancel_batch(
-            &batch_id,
-            &http_client,
-            &InferenceCredentials::default(),
-        )
+        .cancel_batch(&batch_id, &http_client, &InferenceCredentials::default())
         .await?;
 
     // Return the batch object as response
