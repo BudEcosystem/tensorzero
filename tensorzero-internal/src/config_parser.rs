@@ -417,6 +417,9 @@ impl<'c> Config<'c> {
                                         crate::embeddings::EmbeddingProviderConfig::VLLM(p) => {
                                             ProviderConfig::VLLM(p)
                                         }
+                                        crate::embeddings::EmbeddingProviderConfig::Together(p) => {
+                                            ProviderConfig::Together(p)
+                                        }
                                         #[cfg(any(test, feature = "e2e_tests"))]
                                         crate::embeddings::EmbeddingProviderConfig::Dummy(p) => {
                                             ProviderConfig::Dummy(p)
