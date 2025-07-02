@@ -493,7 +493,6 @@ jobs:
     needs:
       [
         clickhouse-tests-cloud,
-        check-docker-compose,
         validate,
         clickhouse-tests,
         sdk-integration-tests,
