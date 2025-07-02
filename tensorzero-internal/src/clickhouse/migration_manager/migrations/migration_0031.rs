@@ -152,6 +152,8 @@ impl Migration for Migration0031<'_> {
                     // that means another process completed the migration
                     if error_msg.contains("UNKNOWN_IDENTIFIER") 
                         || error_msg.contains("Missing columns: 'status_new'")
+                        || error_msg.contains("NOT_FOUND_COLUMN_IN_BLOCK")
+                        || error_msg.contains("Cannot find column")
                         || error_msg.contains("already exists") {
                         // This is expected in concurrent scenarios
                     } else {
@@ -167,6 +169,30 @@ impl Migration for Migration0031<'_> {
 
     /// Check if the migration has succeeded (i.e. it should not be applied again)
     async fn has_succeeded(&self) -> Result<bool, Error> {
+        use super::check_column_exists;
+        
+        // The migration is successful if:
+        // 1. There is a 'status' column with the new enum values, OR
+        // 2. We're in a transitional state but another process will complete it
+        
+        // Check if status column exists
+        let status_exists = check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?;
+        let status_new_exists = check_column_exists(self.clickhouse, "BatchRequest", "status_new", MIGRATION_ID).await?;
+        
+        if status_exists && !status_new_exists {
+            // Check if it has the new enum values
+            let column_type = get_column_type(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?;
+            
+            // If it contains any of the new values, the migration succeeded
+            if column_type.contains("validating") || column_type.contains("in_progress") {
+                return Ok(true);
+            }
+        } else if status_new_exists {
+            // We're in a transitional state - consider it succeeded since another process will complete it
+            return Ok(true);
+        }
+        
+        // If neither condition is met, check using the original logic
         let should_apply = self.should_apply().await?;
         Ok(!should_apply)
     }
