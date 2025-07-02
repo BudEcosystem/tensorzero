@@ -32,6 +32,15 @@ impl Migration for Migration0031<'_> {
 
     /// Check if the migration has already been applied by checking the enum values
     async fn should_apply(&self) -> Result<bool, Error> {
+        use super::check_column_exists;
+        
+        // First check if the status column exists
+        if !check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await? {
+            // If there's no status column, we need to check if status_new exists
+            // which would mean we're in the middle of the migration
+            return Ok(check_column_exists(self.clickhouse, "BatchRequest", "status_new", MIGRATION_ID).await?);
+        }
+        
         let column_type =
             get_column_type(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?;
 
@@ -50,6 +59,8 @@ impl Migration for Migration0031<'_> {
     }
 
     async fn apply(&self, _clean_start: bool) -> Result<(), Error> {
+        use super::check_column_exists;
+        
         // ClickHouse doesn't support direct enum modification, so we need to:
         // 1. Add a new column with the extended enum
         // 2. Copy data from old column to new column
@@ -76,32 +87,40 @@ impl Migration for Migration0031<'_> {
             .await?;
 
         // Step 2: Copy data from old status column to new one
-        let query = r#"
-            ALTER TABLE BatchRequest
-            UPDATE status_new = status
-            WHERE 1 = 1"#;
+        // Only do this if the old status column still exists
+        if check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await? {
+            let query = r#"
+                ALTER TABLE BatchRequest
+                UPDATE status_new = status
+                WHERE 1 = 1"#;
 
-        self.clickhouse
-            .run_query_synchronous(query.to_string(), None)
-            .await?;
+            self.clickhouse
+                .run_query_synchronous(query.to_string(), None)
+                .await?;
 
-        // Step 3: Drop the old status column
-        let query = r#"
-            ALTER TABLE BatchRequest
-            DROP COLUMN status"#;
+            // Step 3: Drop the old status column
+            let query = r#"
+                ALTER TABLE BatchRequest
+                DROP COLUMN IF EXISTS status"#;
 
-        self.clickhouse
-            .run_query_synchronous(query.to_string(), None)
-            .await?;
+            self.clickhouse
+                .run_query_synchronous(query.to_string(), None)
+                .await?;
+        }
 
         // Step 4: Rename the new column to the original name
-        let query = r#"
-            ALTER TABLE BatchRequest
-            RENAME COLUMN status_new TO status"#;
+        // Only rename if status_new exists and status doesn't
+        if check_column_exists(self.clickhouse, "BatchRequest", "status_new", MIGRATION_ID).await?
+            && !check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?
+        {
+            let query = r#"
+                ALTER TABLE BatchRequest
+                RENAME COLUMN status_new TO status"#;
 
-        self.clickhouse
-            .run_query_synchronous(query.to_string(), None)
-            .await?;
+            self.clickhouse
+                .run_query_synchronous(query.to_string(), None)
+                .await?;
+        }
 
         Ok(())
     }
