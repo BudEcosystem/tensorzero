@@ -41,43 +41,15 @@ impl Migration for Migration0030<'_> {
 
     /// Check if the migration has already been applied by checking if the OpenAI-specific columns exist
     async fn should_apply(&self) -> Result<bool, Error> {
-        // Check for a few key OpenAI columns to determine if migration has been applied
-        if !check_column_exists(
+        // Since all columns are added in a single atomic ALTER TABLE statement,
+        // we only need to check for one of them to see if the migration has been applied.
+        Ok(!check_column_exists(
             self.clickhouse,
             "BatchRequest",
             "openai_batch_id",
             MIGRATION_ID,
         )
-        .await?
-        {
-            return Ok(true);
-        }
-        if !check_column_exists(
-            self.clickhouse,
-            "BatchRequest",
-            "completion_window",
-            MIGRATION_ID,
-        )
-        .await?
-        {
-            return Ok(true);
-        }
-        if !check_column_exists(
-            self.clickhouse,
-            "BatchRequest",
-            "input_file_id",
-            MIGRATION_ID,
-        )
-        .await?
-        {
-            return Ok(true);
-        }
-        if !check_column_exists(self.clickhouse, "BatchRequest", "metadata", MIGRATION_ID).await? {
-            return Ok(true);
-        }
-
-        // All OpenAI columns exist, so we should not apply the migration
-        Ok(false)
+        .await?)
     }
 
     async fn apply(&self, _clean_start: bool) -> Result<(), Error> {

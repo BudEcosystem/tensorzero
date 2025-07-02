@@ -3825,6 +3825,25 @@ pub async fn response_input_items_handler(
         })
 }
 
+/// Helper function to create an OpenAI provider for batch operations
+/// This centralizes the credential handling for batch API operations
+fn create_batch_openai_provider() -> Result<OpenAIProvider, Error> {
+    // TODO: In the future, this should read from configuration
+    // For now, we use the environment variable as per OpenAI's standard
+    let credential_location = CredentialLocation::Env("OPENAI_API_KEY".to_string());
+    
+    OpenAIProvider::new(
+        "batch".to_string(), // Model name not used for batch operations
+        None, // Use default API base
+        Some(credential_location),
+    )
+    .map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
+        })
+    })
+}
+
 /// File upload handler for OpenAI Batch API
 #[debug_handler(state = AppStateData)]
 pub async fn file_upload_handler(
@@ -3905,16 +3924,7 @@ pub async fn file_upload_handler(
     validate_batch_file(&file_data, &filename, content_type)?;
 
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // Upload file to the provider
     let file_object = openai_provider
@@ -3964,16 +3974,7 @@ pub async fn file_retrieve_handler(
     Path(file_id): Path<String>,
 ) -> Result<Response<Body>, Error> {
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // Get file from the provider
     let file_object = openai_provider
@@ -4021,16 +4022,7 @@ pub async fn file_content_handler(
     Path(file_id): Path<String>,
 ) -> Result<Response<Body>, Error> {
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // Get file metadata first to get the filename
     let file_object = openai_provider
@@ -4082,16 +4074,7 @@ pub async fn file_delete_handler(
     Path(file_id): Path<String>,
 ) -> Result<Response<Body>, Error> {
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // Delete the file from the provider
     let file_object = openai_provider
@@ -4132,16 +4115,7 @@ pub async fn batch_create_handler(
     tracing::info!("Batch creation request validated successfully");
 
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // Validate endpoint
     match request.endpoint.as_str() {
@@ -4207,16 +4181,7 @@ pub async fn batch_retrieve_handler(
     Path(batch_id): Path<String>,
 ) -> Result<Response<Body>, Error> {
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // Get batch status from the provider
     let batch_object = openai_provider
@@ -4264,16 +4229,7 @@ pub async fn batch_list_handler(
     Query(params): Query<ListBatchesParams>,
 ) -> Result<Response<Body>, Error> {
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // List batches from the provider
     let list_response = openai_provider
@@ -4321,16 +4277,7 @@ pub async fn batch_cancel_handler(
     Path(batch_id): Path<String>,
 ) -> Result<Response<Body>, Error> {
     // Create OpenAI provider directly for batch operations (these are account-level operations)
-    let openai_provider = OpenAIProvider::new(
-        "batch".to_string(), // Model name not used for batch operations
-        None, // Use default API base
-        Some(CredentialLocation::Env("OPENAI_API_KEY".to_string())),
-    )
-    .map_err(|e| {
-        Error::new(ErrorDetails::Config {
-            message: format!("Failed to create OpenAI provider for batch operations: {e}"),
-        })
-    })?;
+    let openai_provider = create_batch_openai_provider()?;
 
     // Cancel the batch with the provider
     let batch_object = openai_provider

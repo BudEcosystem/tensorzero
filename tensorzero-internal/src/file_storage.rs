@@ -256,8 +256,8 @@ pub fn validate_batch_file(
     filename: &str,
     content_type: &str,
 ) -> Result<(), Error> {
-    // Check file size (max 200MB)
-    const MAX_FILE_SIZE: usize = 200 * 1024 * 1024;
+    // Check file size (max 100MB)
+    const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
     if content.len() > MAX_FILE_SIZE {
         return Err(Error::new(ErrorDetails::InvalidRequest {
             message: format!(
