@@ -38,13 +38,13 @@ impl Migration for Migration0031<'_> {
         if !check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await? {
             // If there's no status column, we need to check if status_new exists
             // which would mean we're in the middle of the migration
-            return Ok(check_column_exists(
+            return check_column_exists(
                 self.clickhouse,
                 "BatchRequest",
                 "status_new",
                 MIGRATION_ID,
             )
-            .await?);
+            .await;
         }
 
         let column_type =
