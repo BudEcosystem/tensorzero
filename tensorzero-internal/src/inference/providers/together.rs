@@ -815,6 +815,55 @@ struct TogetherChatChunk {
     usage: Option<OpenAIUsage>,
 }
 
+use crate::embeddings::{
+    EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest,
+};
+
+// Together Embedding types
+#[derive(Debug, Serialize)]
+struct TogetherEmbeddingRequest<'a> {
+    model: &'a str,
+    input: TogetherEmbeddingInput<'a>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum TogetherEmbeddingInput<'a> {
+    Single(&'a str),
+    Batch(Vec<&'a str>),
+}
+
+impl<'a> TogetherEmbeddingRequest<'a> {
+    fn new(model: &'a str, input: &'a EmbeddingInput) -> Self {
+        let input = match input {
+            EmbeddingInput::Single(text) => TogetherEmbeddingInput::Single(text),
+            EmbeddingInput::Batch(texts) => {
+                TogetherEmbeddingInput::Batch(texts.iter().map(|s| s.as_str()).collect())
+            }
+        };
+        Self { model, input }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TogetherEmbeddingResponse {
+    data: Vec<TogetherEmbeddingData>,
+    usage: OpenAIUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct TogetherEmbeddingData {
+    embedding: Vec<f32>,
+}
+
+fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
+    base_url.join("embeddings").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
 // Image generation types
 #[derive(Debug, Serialize)]
 struct TogetherImageGenerationRequest {
@@ -875,6 +924,120 @@ fn get_image_generation_url(base_url: &Url) -> Result<Url, Error> {
             message: e.to_string(),
         })
     })
+}
+
+impl EmbeddingProvider for TogetherProvider {
+    async fn embed(
+        &self,
+        request: &EmbeddingRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<EmbeddingProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_body = TogetherEmbeddingRequest::new(&self.model_name, &request.input);
+
+        // Serialize request body once at the beginning
+        let raw_request = serde_json::to_string(&request_body).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing request body as JSON: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
+        let request_url = get_embedding_url(&TOGETHER_API_BASE)?;
+        let start_time = Instant::now();
+
+        let request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret());
+
+        let res = request_builder
+            .body(raw_request.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Together: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
+
+        let status = res.status();
+        if status.is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: TogetherEmbeddingResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(raw_request.clone()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            let embeddings: Vec<Vec<f32>> = response
+                .data
+                .into_iter()
+                .map(|data| data.embedding)
+                .collect();
+
+            let usage = Usage::from(response.usage);
+
+            Ok(EmbeddingProviderResponse::new(
+                embeddings,
+                request.input.clone(),
+                raw_request,
+                raw_response,
+                usage,
+                latency,
+            ))
+        } else {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            Err(handle_openai_error(
+                &raw_request,
+                status,
+                &raw_response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
 }
 
 // Image generation implementation
@@ -1780,6 +1943,83 @@ mod tests {
                 id: "0".to_string(),
             })]
         );
+    }
+
+    #[test]
+    fn test_together_embedding_request_new() {
+        use crate::embeddings::{EmbeddingInput, EmbeddingRequest};
+
+        // Test single input
+        let single_input = EmbeddingInput::Single("Hello, world!".to_string());
+        let request = EmbeddingRequest {
+            input: single_input,
+            encoding_format: None,
+        };
+        let together_request =
+            TogetherEmbeddingRequest::new("BAAI/bge-base-en-v1.5", &request.input);
+
+        assert_eq!(together_request.model, "BAAI/bge-base-en-v1.5");
+        assert!(matches!(
+            together_request.input,
+            TogetherEmbeddingInput::Single("Hello, world!")
+        ));
+
+        // Test batch input
+        let batch_input =
+            EmbeddingInput::Batch(vec!["First text".to_string(), "Second text".to_string()]);
+        let request = EmbeddingRequest {
+            input: batch_input,
+            encoding_format: Some("float".to_string()),
+        };
+        let together_request = TogetherEmbeddingRequest::new(
+            "togethercomputer/m2-bert-80M-8k-retrieval",
+            &request.input,
+        );
+
+        assert_eq!(
+            together_request.model,
+            "togethercomputer/m2-bert-80M-8k-retrieval"
+        );
+        match together_request.input {
+            TogetherEmbeddingInput::Batch(texts) => {
+                assert_eq!(texts.len(), 2);
+                assert_eq!(texts[0], "First text");
+                assert_eq!(texts[1], "Second text");
+            }
+            _ => panic!("Expected batch input"),
+        }
+    }
+
+    #[test]
+    fn test_together_embedding_response_parsing() {
+        let json_response = r#"{
+            "data": [
+                {
+                    "index": 0,
+                    "object": "embedding",
+                    "embedding": [0.1, 0.2, 0.3]
+                },
+                {
+                    "index": 1,
+                    "object": "embedding",
+                    "embedding": [0.4, 0.5, 0.6]
+                }
+            ],
+            "model": "BAAI/bge-base-en-v1.5",
+            "object": "list",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 0,
+                "total_tokens": 10
+            }
+        }"#;
+
+        let response: TogetherEmbeddingResponse = serde_json::from_str(json_response).unwrap();
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+        assert_eq!(response.data[1].embedding, vec![0.4, 0.5, 0.6]);
+        assert_eq!(response.usage.prompt_tokens, 10);
+        assert_eq!(response.usage.total_tokens, 10);
     }
 
     #[tokio::test]

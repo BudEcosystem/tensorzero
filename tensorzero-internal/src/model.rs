@@ -1955,6 +1955,9 @@ impl ModelProvider {
             ProviderConfig::VLLM(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
+            ProviderConfig::Together(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
