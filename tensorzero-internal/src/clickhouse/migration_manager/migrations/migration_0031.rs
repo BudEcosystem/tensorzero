@@ -93,25 +93,42 @@ impl Migration for Migration0031<'_> {
             .await?;
 
         // Step 2: Copy data from old status column to new one
-        // Only do this if the old status column still exists
+        // We need to be careful here because in concurrent scenarios, the column might disappear
+        // between our check and the actual UPDATE. We'll use a try-catch approach.
         if check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await? {
-            let query = r#"
-                ALTER TABLE BatchRequest
-                UPDATE status_new = status
-                WHERE 1 = 1"#;
+            // First, let's try to copy the data
+            let copy_result = self.clickhouse
+                .run_query_synchronous(
+                    "ALTER TABLE BatchRequest UPDATE status_new = status WHERE 1 = 1".to_string(),
+                    None
+                )
+                .await;
+            
+            // If the copy failed because the column doesn't exist, that's OK - another migration
+            // process might have already handled it
+            match copy_result {
+                Ok(_) => {
+                    // Successfully copied, now drop the old column
+                    let query = r#"
+                        ALTER TABLE BatchRequest
+                        DROP COLUMN IF EXISTS status"#;
 
-            self.clickhouse
-                .run_query_synchronous(query.to_string(), None)
-                .await?;
-
-            // Step 3: Drop the old status column
-            let query = r#"
-                ALTER TABLE BatchRequest
-                DROP COLUMN IF EXISTS status"#;
-
-            self.clickhouse
-                .run_query_synchronous(query.to_string(), None)
-                .await?;
+                    self.clickhouse
+                        .run_query_synchronous(query.to_string(), None)
+                        .await?;
+                },
+                Err(e) => {
+                    // Check if the error is because the column doesn't exist
+                    let error_msg = e.to_string();
+                    if error_msg.contains("UNKNOWN_IDENTIFIER") || error_msg.contains("Missing columns: 'status'") {
+                        // This is expected in concurrent scenarios - another process already handled it
+                        // Continue with the migration
+                    } else {
+                        // This is an unexpected error, propagate it
+                        return Err(e);
+                    }
+                }
+            }
         }
 
         // Step 4: Rename the new column to the original name
@@ -119,13 +136,30 @@ impl Migration for Migration0031<'_> {
         if check_column_exists(self.clickhouse, "BatchRequest", "status_new", MIGRATION_ID).await?
             && !check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?
         {
-            let query = r#"
-                ALTER TABLE BatchRequest
-                RENAME COLUMN status_new TO status"#;
-
-            self.clickhouse
-                .run_query_synchronous(query.to_string(), None)
-                .await?;
+            let rename_result = self.clickhouse
+                .run_query_synchronous(
+                    "ALTER TABLE BatchRequest RENAME COLUMN status_new TO status".to_string(),
+                    None
+                )
+                .await;
+            
+            // Handle potential concurrent rename attempts
+            match rename_result {
+                Ok(_) => {},
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    // If the error is because status_new doesn't exist or status already exists,
+                    // that means another process completed the migration
+                    if error_msg.contains("UNKNOWN_IDENTIFIER") 
+                        || error_msg.contains("Missing columns: 'status_new'")
+                        || error_msg.contains("already exists") {
+                        // This is expected in concurrent scenarios
+                    } else {
+                        // Unexpected error, propagate it
+                        return Err(e);
+                    }
+                }
+            }
         }
 
         Ok(())
