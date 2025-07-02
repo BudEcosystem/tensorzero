@@ -12,6 +12,9 @@ debug = true
 enable_template_filesystem_access = true
 export.otlp.traces.enabled = true
 
+[gateway.authentication]
+enabled = false
+
 [object_storage]
 type = "disabled"
 
@@ -658,6 +661,23 @@ endpoints = ["embedding"]
 [models.together-m2-bert.providers.together]
 type = "together"
 model_name = "togethercomputer/m2-bert-80M-8k-retrieval"
+# Together image generation models for testing
+[models."flux-schnell"]
+routing = ["together"]
+endpoints = ["image_generation"]
+
+[models."flux-schnell".providers.together]
+type = "together"
+model_name = "black-forest-labs/FLUX.1-schnell"
+
+# Dummy image generation model for testing
+[models."image-generation-test"]
+routing = ["dummy"]
+endpoints = ["image_generation"]
+
+[models."image-generation-test".providers.dummy]
+type = "dummy"
+model_name = "image-generation-test"
 
 
 # ┌────────────────────────────────────────────────────────────────────────────┐

@@ -406,3 +406,83 @@ curl -X GET http://localhost:3000/v1/responses/resp_123/input_items \
 - Caching strategy for responses
 - Metrics and observability for response lifecycle
 - Provider-specific optimizations
+
+## Together Provider Image Generation
+
+### Overview
+
+The Together provider now supports image generation through OpenAI-compatible endpoints, enabling access to FLUX.1 image generation models:
+- **FLUX.1 [schnell]** - Fast open-source model with free tier
+- **FLUX1.1 [pro]** - Premium model
+- **FLUX.1 [pro]** - High-performance production model
+
+### Configuration
+
+```toml
+# Image generation model configuration
+[models."flux-schnell"]
+routing = ["together"]
+endpoints = ["image_generation"]
+
+[models."flux-schnell".providers.together]
+type = "together"
+model_name = "black-forest-labs/FLUX.1-schnell"
+
+# For premium models
+[models."flux-1-1-pro"]
+routing = ["together"]
+endpoints = ["image_generation"]
+
+[models."flux-1-1-pro".providers.together]
+type = "together"
+model_name = "black-forest-labs/FLUX1.1-pro"
+```
+
+### API Usage
+
+Together's image generation follows the OpenAI-compatible format:
+
+```bash
+# Generate an image
+curl -X POST http://localhost:3000/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "flux-schnell",
+    "prompt": "A beautiful sunset over mountains",
+    "n": 1,
+    "size": "1024x1024",
+    "response_format": "url"
+  }'
+```
+
+### Implementation Details
+
+1. **Provider Implementation**: `TogetherProvider` implements the `ImageGenerationProvider` trait
+2. **Endpoint**: Uses Together's OpenAI-compatible endpoint: `https://api.together.xyz/v1/images/generations`
+3. **Authentication**: Uses the same API key configuration as chat completions
+4. **Response Format**: Returns standard OpenAI image response format with URLs or base64 data
+
+### Together-Specific Parameters
+
+While the implementation uses OpenAI-compatible format, Together supports additional parameters:
+- `steps`: Number of inference steps (currently set to default)
+- `disable_safety_checker`: Boolean flag for safety filter (currently set to default)
+
+These can be added in future enhancements if needed.
+
+### Limitations
+
+- Only image generation is supported (no image editing or variations)
+- Together-specific parameters are not yet exposed through the API
+- No caching support for image generation responses
+
+### Testing
+
+```bash
+# Run unit tests
+cargo test --package tensorzero-internal test_together_image
+
+# Run integration tests (requires test configuration)
+cargo test --package tensorzero-internal test_openai_compatible_image_generation
+```

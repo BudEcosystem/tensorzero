@@ -1,3 +1,5 @@
+#![allow(clippy::allow_attributes)]
+
 use std::{borrow::Cow, sync::OnceLock, time::Duration};
 
 use futures::StreamExt;
@@ -22,10 +24,13 @@ use crate::tool::ToolChoice;
 use crate::{
     endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails},
+    images::{
+        ImageData, ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
+    },
     inference::types::{
         batch::{BatchRequestRow, PollBatchInferenceResponse, StartBatchProviderInferenceResponse},
         ContentBlockChunk, ContentBlockOutput, ProviderInferenceResponseChunk,
-        ProviderInferenceResponseStreamInner, Text, TextChunk, Thought, ThoughtChunk,
+        ProviderInferenceResponseStreamInner, Text, TextChunk, Thought, ThoughtChunk, Usage,
     },
     tool::{ToolCall, ToolCallChunk},
 };
@@ -860,6 +865,68 @@ fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
     })
 }
 
+// Image generation types
+#[derive(Debug, Serialize)]
+struct TogetherImageGenerationRequest {
+    model: String,
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    n: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    // Together-specific parameters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    steps: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disable_safety_checker: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TogetherImageResponse {
+    id: String,
+    model: String,
+    object: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<u64>,
+    data: Vec<TogetherImageData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TogetherImageData {
+    index: u32,
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    b64_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revised_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timings: Option<TogetherImageTimings>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TogetherImageTimings {
+    inference: f64,
+}
+
+fn get_image_generation_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("images/generations").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
 impl EmbeddingProvider for TogetherProvider {
     async fn embed(
         &self,
@@ -966,6 +1033,119 @@ impl EmbeddingProvider for TogetherProvider {
                 &serde_json::to_string(&request_body).unwrap_or_default(),
                 status,
                 &raw_response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Image generation implementation
+impl ImageGenerationProvider for TogetherProvider {
+    async fn generate_image(
+        &self,
+        request: &ImageGenerationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageGenerationProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_image_generation_url(&TOGETHER_API_BASE)?;
+
+        // Build Together-specific request
+        let together_request = TogetherImageGenerationRequest {
+            model: self.model_name.clone(),
+            prompt: request.prompt.clone(),
+            n: request.n,
+            size: request.size.as_ref().map(|s| s.as_str().to_string()),
+            response_format: request
+                .response_format
+                .as_ref()
+                .map(|f| f.as_str().to_string()),
+            user: request.user.clone(),
+            // Together-specific defaults
+            steps: None,                  // Let Together use default
+            disable_safety_checker: None, // Let Together use default
+        };
+
+        let request_json = serde_json::to_string(&together_request).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!("Failed to serialize Together image generation request: {e}"),
+            })
+        })?;
+
+        let request_builder = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret())
+            .body(request_json.clone());
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send Together image generation request: {e}"),
+                status_code: None,
+                raw_request: Some(request_json.clone()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let response_body = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to read Together image generation response: {e}"),
+                    status_code: None,
+                    raw_request: Some(request_json.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: TogetherImageResponse =
+                serde_json::from_str(&response_body).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        message: format!("Failed to parse Together image generation response: {e}"),
+                        status_code: None,
+                        raw_request: Some(request_json.clone()),
+                        raw_response: Some(response_body.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(ImageGenerationProviderResponse {
+                id: request.id,
+                created: response.created.unwrap_or_else(|| {
+                    // Use current timestamp if not provided
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                }),
+                data: response
+                    .data
+                    .into_iter()
+                    .map(|d| ImageData {
+                        url: d.url,
+                        b64_json: d.b64_json,
+                        revised_prompt: d.revised_prompt,
+                    })
+                    .collect(),
+                raw_request: request_json,
+                raw_response: response_body,
+                usage: Usage {
+                    input_tokens: 0, // Together doesn't provide token usage for images
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                &request_json,
+                res.status(),
+                &res.text().await.unwrap_or_default(),
                 PROVIDER_TYPE,
             ))
         }
@@ -1839,5 +2019,121 @@ mod tests {
         assert_eq!(response.data[1].embedding, vec![0.4, 0.5, 0.6]);
         assert_eq!(response.usage.prompt_tokens, 10);
         assert_eq!(response.usage.total_tokens, 10);
+    }
+
+    #[tokio::test]
+    async fn test_together_image_generation_request_serialization() {
+        use crate::images::{ImageGenerationRequest, ImageResponseFormat, ImageSize};
+        use std::sync::Arc;
+
+        // Set up test environment variable
+        std::env::set_var("TEST_TOGETHER_API_KEY", "test-api-key");
+
+        let provider = TogetherProvider::new(
+            "black-forest-labs/FLUX.1-schnell".to_string(),
+            Some(CredentialLocation::Env("TEST_TOGETHER_API_KEY".to_string())),
+            false,
+        )
+        .unwrap();
+
+        let request = ImageGenerationRequest {
+            id: Uuid::now_v7(),
+            prompt: "A beautiful sunset over mountains".to_string(),
+            model: Arc::from("flux-schnell"),
+            n: Some(1),
+            size: Some(ImageSize::Size1024x1024),
+            quality: None,
+            style: None,
+            response_format: Some(ImageResponseFormat::Url),
+            user: Some("test-user".to_string()),
+            background: None,
+            moderation: None,
+            output_compression: None,
+            output_format: None,
+        };
+
+        // Create the Together-specific request
+        let together_request = TogetherImageGenerationRequest {
+            model: provider.model_name().to_string(),
+            prompt: request.prompt.clone(),
+            n: request.n,
+            size: request.size.as_ref().map(|s| s.as_str().to_string()),
+            response_format: request
+                .response_format
+                .as_ref()
+                .map(|f| f.as_str().to_string()),
+            user: request.user.clone(),
+            steps: None,
+            disable_safety_checker: None,
+        };
+
+        // Test serialization
+        let serialized = serde_json::to_string(&together_request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "black-forest-labs/FLUX.1-schnell");
+        assert_eq!(parsed["prompt"], "A beautiful sunset over mountains");
+        assert_eq!(parsed["n"], 1);
+        assert_eq!(parsed["size"], "1024x1024");
+        assert_eq!(parsed["response_format"], "url");
+        assert_eq!(parsed["user"], "test-user");
+        assert!(parsed.get("steps").is_none());
+        assert!(parsed.get("disable_safety_checker").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_together_image_response_parsing() {
+        // Test with actual Together API response format
+        let response_json = r#"{
+            "id": "o1TnXqu-2kFHot-958e7e079b9d47e3-PDX",
+            "model": "black-forest-labs/FLUX.1-schnell",
+            "object": "list",
+            "data": [
+                {
+                    "index": 0,
+                    "url": "https://api.together.ai/shrt/vcu2cXNQebqphdfe",
+                    "timings": {
+                        "inference": 0.29318173974752426
+                    }
+                }
+            ]
+        }"#;
+
+        let response: TogetherImageResponse = serde_json::from_str(response_json).unwrap();
+
+        assert_eq!(response.id, "o1TnXqu-2kFHot-958e7e079b9d47e3-PDX");
+        assert_eq!(response.model, "black-forest-labs/FLUX.1-schnell");
+        assert_eq!(response.object, "list");
+        assert_eq!(response.created, None);
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(response.data[0].index, 0);
+        assert_eq!(
+            response.data[0].url,
+            Some("https://api.together.ai/shrt/vcu2cXNQebqphdfe".to_string())
+        );
+        assert_eq!(response.data[0].b64_json, None);
+        assert_eq!(response.data[0].revised_prompt, None);
+        assert!(response.data[0].timings.is_some());
+        assert_eq!(
+            response.data[0].timings.as_ref().unwrap().inference,
+            0.29318173974752426
+        );
+
+        // Test with created field present (backward compatibility)
+        let response_with_created = r#"{
+            "id": "test-id",
+            "model": "black-forest-labs/FLUX.1-schnell",
+            "object": "list",
+            "created": 1234567890,
+            "data": [
+                {
+                    "index": 0,
+                    "url": "https://example.com/image.png"
+                }
+            ]
+        }"#;
+
+        let response2: TogetherImageResponse = serde_json::from_str(response_with_created).unwrap();
+        assert_eq!(response2.created, Some(1234567890));
     }
 }

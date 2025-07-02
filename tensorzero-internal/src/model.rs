@@ -2068,6 +2068,11 @@ impl ModelProvider {
                     .generate_image(request, client, dynamic_api_keys)
                     .await
             }
+            ProviderConfig::Together(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
                 provider
