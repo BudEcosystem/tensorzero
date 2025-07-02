@@ -818,7 +818,6 @@ struct TogetherChatChunk {
 use crate::embeddings::{
     EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest,
 };
-use crate::inference::types::Usage;
 
 // Together Embedding types
 #[derive(Debug, Serialize)]
