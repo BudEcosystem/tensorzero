@@ -33,8 +33,8 @@ openai_client = OpenAI(
     api_key=OPENAI_API_KEY
 ) if OPENAI_API_KEY else None
 
-# Test image paths
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "images"
+# Test image paths (fixtures are in the parent SDK directory)
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "images"
 TEST_IMAGE_PATH = FIXTURES_DIR / "test_image.png"
 SMALL_IMAGE_PATH = FIXTURES_DIR / "small_test.png"
 LARGE_IMAGE_PATH = FIXTURES_DIR / "large_test.png"
@@ -46,9 +46,11 @@ def setup_module():
     """Setup test images before running tests."""
     if not FIXTURES_DIR.exists():
         print("Creating test images...")
+        # Run the script from the parent SDK directory
+        sdk_dir = Path(__file__).parent.parent
         subprocess.run(
             ["python", "create_test_images.py"],
-            cwd=Path(__file__).parent,
+            cwd=sdk_dir,
             check=True
         )
 

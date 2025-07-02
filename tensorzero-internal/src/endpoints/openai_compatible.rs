@@ -19,7 +19,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 use url::Url;
 use uuid::Uuid;
@@ -5028,5 +5028,425 @@ mod tests {
         assert_eq!(params.tool_choice, Some(json!("auto")));
         assert_eq!(params.parallel_tool_calls, Some(true));
         assert_eq!(params.max_tool_calls, Some(3));
+    }
+}
+
+// Anthropic Messages API support
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AnthropicMessagesParams {
+    /// Input messages.
+    messages: Vec<AnthropicMessage>,
+    /// The model to use for the completion.
+    model: String,
+    /// The maximum number of tokens to generate.
+    max_tokens: u32,
+    /// System prompt (separate from messages in Anthropic API).
+    system: Option<String>,
+    /// Controls randomness: 0 is deterministic, 1 is very random.
+    temperature: Option<f32>,
+    /// Nucleus sampling: only sample from top P probability tokens.
+    top_p: Option<f32>,
+    /// Stop sequences to use.
+    stop_sequences: Option<Vec<String>>,
+    /// Whether to stream the response.
+    stream: Option<bool>,
+    /// Tools available to the model.
+    tools: Option<Vec<AnthropicTool>>,
+    /// Tool choice configuration.
+    tool_choice: Option<AnthropicToolChoice>,
+    /// Metadata about the request.
+    metadata: Option<AnthropicMetadata>,
+    /// The top K tokens to sample from.
+    top_k: Option<u32>,
+    /// A unique identifier representing your end-user.
+    user_id: Option<String>,
+    // TensorZero extensions
+    #[serde(rename = "tensorzero::variant_name")]
+    tensorzero_variant_name: Option<String>,
+    #[serde(rename = "tensorzero::dryrun")]
+    tensorzero_dryrun: Option<bool>,
+    #[serde(rename = "tensorzero::episode_id")]
+    tensorzero_episode_id: Option<Uuid>,
+    #[serde(rename = "tensorzero::cache_options")]
+    tensorzero_cache_options: Option<CacheParamsOptions>,
+    // Capture any extra fields
+    #[serde(flatten)]
+    unknown_fields: HashMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "role")]
+#[serde(rename_all = "lowercase")]
+enum AnthropicMessage {
+    User { content: AnthropicContent },
+    Assistant { content: AnthropicContent },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum AnthropicContent {
+    Text(String),
+    Blocks(Vec<AnthropicContentBlock>),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+enum AnthropicContentBlock {
+    Text { text: String },
+    Image { source: AnthropicImageSource },
+    ToolUse { id: String, name: String, input: Value },
+    ToolResult { tool_use_id: String, content: AnthropicContent },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct AnthropicImageSource {
+    #[serde(rename = "type")]
+    source_type: String,
+    media_type: String,
+    data: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct AnthropicTool {
+    name: String,
+    description: Option<String>,
+    input_schema: Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum AnthropicToolChoice {
+    Auto,
+    Any,
+    Tool { name: String },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct AnthropicMetadata {
+    user_id: Option<String>,
+}
+
+/// Handler for Anthropic Messages API compatibility
+#[debug_handler(state = AppStateData)]
+pub async fn anthropic_messages_handler(
+    State(app_state): AppState,
+    headers: HeaderMap,
+    StructuredJson(anthropic_params): StructuredJson<AnthropicMessagesParams>,
+) -> Result<Response<Body>, Error> {
+    if !anthropic_params.unknown_fields.is_empty() {
+        tracing::warn!(
+            "Ignoring unknown fields in Anthropic Messages request: {:?}",
+            anthropic_params
+                .unknown_fields
+                .keys()
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // Convert Anthropic format to OpenAI-compatible format
+    let openai_params = convert_anthropic_to_openai(anthropic_params)?;
+
+    // Call the existing inference handler with converted parameters
+    let response = inference_handler(
+        State(app_state),
+        headers,
+        StructuredJson(openai_params),
+    )
+    .await?;
+
+    // Convert the response from OpenAI format to Anthropic format
+    convert_openai_response_to_anthropic(response).await
+}
+
+/// Convert Anthropic Messages API request to OpenAI-compatible format
+fn convert_anthropic_to_openai(
+    anthropic_params: AnthropicMessagesParams,
+) -> Result<OpenAICompatibleParams, Error> {
+    let mut messages = Vec::new();
+
+    // Add system message if present
+    if let Some(system) = anthropic_params.system {
+        messages.push(OpenAICompatibleMessage::System(OpenAICompatibleSystemMessage {
+            content: Value::String(system),
+        }));
+    }
+
+    // Convert messages
+    for msg in anthropic_params.messages {
+        match msg {
+            AnthropicMessage::User { content } => {
+                let content_value = convert_anthropic_content_to_value(content)?;
+                messages.push(OpenAICompatibleMessage::User(OpenAICompatibleUserMessage {
+                    content: content_value,
+                }));
+            }
+            AnthropicMessage::Assistant { content } => {
+                let content_value = convert_anthropic_content_to_value(content)?;
+                messages.push(OpenAICompatibleMessage::Assistant(OpenAICompatibleAssistantMessage {
+                    content: Some(content_value),
+                    tool_calls: None,
+                }));
+            }
+        }
+    }
+
+    // Convert tools
+    let tools = anthropic_params.tools.map(|tools| {
+        tools
+            .into_iter()
+            .map(|tool| OpenAICompatibleTool::Function {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.input_schema,
+                strict: false,
+            })
+            .collect()
+    });
+
+    // Convert tool choice
+    let tool_choice = anthropic_params.tool_choice.map(|choice| {
+        match choice {
+            AnthropicToolChoice::Auto => ChatCompletionToolChoiceOption::Auto,
+            AnthropicToolChoice::Any => ChatCompletionToolChoiceOption::Required,
+            AnthropicToolChoice::Tool { name } => {
+                ChatCompletionToolChoiceOption::Named(OpenAICompatibleNamedToolChoice {
+                    r#type: "function".to_string(),
+                    function: FunctionName { name },
+                })
+            }
+        }
+    });
+
+    // Convert stop sequences
+    let stop = anthropic_params.stop_sequences.map(StringOrVec::Vec);
+
+    Ok(OpenAICompatibleParams {
+        messages,
+        model: anthropic_params.model,
+        max_tokens: Some(anthropic_params.max_tokens),
+        temperature: anthropic_params.temperature,
+        top_p: anthropic_params.top_p,
+        stream: anthropic_params.stream,
+        tools,
+        tool_choice,
+        stop,
+        user: anthropic_params.user_id,
+        tensorzero_variant_name: anthropic_params.tensorzero_variant_name,
+        tensorzero_dryrun: anthropic_params.tensorzero_dryrun,
+        tensorzero_episode_id: anthropic_params.tensorzero_episode_id,
+        tensorzero_cache_options: anthropic_params.tensorzero_cache_options,
+        ..Default::default()
+    })
+}
+
+/// Convert Anthropic content to JSON Value
+fn convert_anthropic_content_to_value(content: AnthropicContent) -> Result<Value, Error> {
+    match content {
+        AnthropicContent::Text(text) => Ok(Value::String(text)),
+        AnthropicContent::Blocks(blocks) => {
+            let converted_blocks: Result<Vec<Value>, Error> = blocks
+                .into_iter()
+                .map(|block| match block {
+                    AnthropicContentBlock::Text { text } => Ok(json!({
+                        "type": "text",
+                        "text": text
+                    })),
+                    AnthropicContentBlock::Image { source } => Ok(json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:{};{},{}", source.media_type, source.source_type, source.data)
+                        }
+                    })),
+                    AnthropicContentBlock::ToolUse { id, name, input } => Ok(json!({
+                        "type": "tool_use",
+                        "id": id,
+                        "name": name,
+                        "input": input
+                    })),
+                    AnthropicContentBlock::ToolResult { tool_use_id, content } => {
+                        convert_anthropic_content_to_value(content).map(|content_value| json!({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": content_value
+                        }))
+                    }
+                })
+                .collect();
+            
+            converted_blocks.map(|blocks| Value::Array(blocks))
+        }
+    }
+}
+
+/// Convert OpenAI response to Anthropic Messages API format
+async fn convert_openai_response_to_anthropic(
+    response: Response<Body>,
+) -> Result<Response<Body>, Error> {
+    let (parts, body) = response.into_parts();
+    
+    // Check if this is a streaming response
+    if parts.headers.get("content-type")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.contains("text/event-stream"))
+        .unwrap_or(false)
+    {
+        // Handle streaming response
+        let stream = body.into_data_stream();
+        let anthropic_stream = stream.map(|chunk| {
+            chunk.and_then(|bytes| {
+                // Parse the SSE data
+                let data = String::from_utf8_lossy(&bytes);
+                if let Some(json_str) = data.strip_prefix("data: ") {
+                    if json_str.trim() == "[DONE]" {
+                        Ok(axum::body::Bytes::from("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+                    } else {
+                        // Parse OpenAI chunk and convert to Anthropic format
+                        match serde_json::from_str::<Value>(json_str) {
+                            Ok(openai_chunk) => {
+                                let anthropic_event = convert_openai_chunk_to_anthropic(openai_chunk);
+                                let event_data = serde_json::to_string(&anthropic_event).unwrap_or_default();
+                                Ok(axum::body::Bytes::from(format!("event: {}\ndata: {}\n\n", 
+                                    anthropic_event["type"].as_str().unwrap_or("content_block_delta"),
+                                    event_data
+                                )))
+                            }
+                            Err(_) => Ok(bytes)
+                        }
+                    }
+                } else {
+                    Ok(bytes)
+                }
+            })
+        });
+
+        let body = Body::from_stream(anthropic_stream);
+        Ok(Response::from_parts(parts, body))
+    } else {
+        // Handle non-streaming response
+        let bytes = axum::body::to_bytes(body, usize::MAX).await
+            .map_err(|e| Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to read response body: {}", e),
+                provider_type: "anthropic_compat".to_string(),
+                raw_request: None,
+                raw_response: None,
+            }))?;
+
+        let openai_response: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to parse OpenAI response: {}", e),
+                provider_type: "anthropic_compat".to_string(),
+                raw_request: None,
+                raw_response: Some(String::from_utf8_lossy(&bytes).to_string()),
+            }))?;
+
+        let anthropic_response = convert_openai_completion_to_anthropic(openai_response)?;
+        
+        let response_bytes = serde_json::to_vec(&anthropic_response)
+            .map_err(|e| Error::new(ErrorDetails::InferenceServer {
+                message: format!("Failed to serialize Anthropic response: {}", e),
+                provider_type: "anthropic_compat".to_string(),
+                raw_request: None,
+                raw_response: None,
+            }))?;
+
+        let body = Body::from(response_bytes);
+        Ok(Response::from_parts(parts, body))
+    }
+}
+
+/// Convert OpenAI completion response to Anthropic format
+fn convert_openai_completion_to_anthropic(openai_response: Value) -> Result<Value, Error> {
+    let choice = openai_response["choices"][0].as_object()
+        .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+            message: "No choices in OpenAI response".to_string(),
+            provider_type: "anthropic_compat".to_string(),
+            raw_request: None,
+            raw_response: Some(openai_response.to_string()),
+        }))?;
+
+    let message = choice["message"].as_object()
+        .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+            message: "No message in choice".to_string(),
+            provider_type: "anthropic_compat".to_string(),
+            raw_request: None,
+            raw_response: Some(openai_response.to_string()),
+        }))?;
+
+    let content = message.get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+
+    let finish_reason = choice.get("finish_reason")
+        .and_then(|r| r.as_str())
+        .unwrap_or("stop");
+
+    let stop_reason = match finish_reason {
+        "stop" => "end_turn",
+        "length" => "max_tokens",
+        "tool_calls" => "tool_use",
+        _ => "end_turn",
+    };
+
+    let usage = openai_response.get("usage").cloned().unwrap_or(json!({}));
+    let input_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0);
+    let output_tokens = usage["completion_tokens"].as_u64().unwrap_or(0);
+
+    Ok(json!({
+        "id": openai_response["id"],
+        "type": "message",
+        "role": "assistant",
+        "content": [{
+            "type": "text",
+            "text": content
+        }],
+        "model": openai_response["model"],
+        "stop_reason": stop_reason,
+        "stop_sequence": null,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
+    }))
+}
+
+/// Convert OpenAI streaming chunk to Anthropic format
+fn convert_openai_chunk_to_anthropic(openai_chunk: Value) -> Value {
+    if let Some(delta) = openai_chunk["choices"][0]["delta"].as_object() {
+        if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "text_delta",
+                    "text": content
+                }
+            })
+        } else {
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "text_delta",
+                    "text": ""
+                }
+            })
+        }
+    } else {
+        json!({
+            "type": "message_start",
+            "message": {
+                "id": openai_chunk["id"],
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": openai_chunk["model"],
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0
+                }
+            }
+        })
     }
 }
