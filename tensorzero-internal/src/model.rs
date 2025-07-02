@@ -2049,6 +2049,97 @@ impl ModelProvider {
         }
     }
 
+    /// Image generation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_image_generation"))]
+    pub async fn generate_image(
+        &self,
+        request: &crate::images::ImageGenerationRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageGenerationProviderResponse, Error> {
+        use crate::images::ImageGenerationProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
+            ProviderConfig::Together(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support image generation yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageGeneration.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Image edit method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_image_edit"))]
+    pub async fn edit_image(
+        &self,
+        request: &crate::images::ImageEditRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageEditProviderResponse, Error> {
+        use crate::images::ImageEditProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider.edit_image(request, client, dynamic_api_keys).await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider.edit_image(request, client, dynamic_api_keys).await
+            }
+            // Other providers don't support image editing yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageEdit.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
+    /// Image variation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_image_variation"))]
+    pub async fn create_image_variation(
+        &self,
+        request: &crate::images::ImageVariationRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::images::ImageVariationProviderResponse, Error> {
+        use crate::images::ImageVariationProvider;
+
+        match &self.config {
+            ProviderConfig::OpenAI(provider) => {
+                provider
+                    .create_image_variation(request, client, dynamic_api_keys)
+                    .await
+            }
+            #[cfg(any(test, feature = "e2e_tests"))]
+            ProviderConfig::Dummy(provider) => {
+                provider
+                    .create_image_variation(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support image variations yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::ImageVariation.as_str().to_string(),
+                provider: self.name.to_string(),
+            })),
+        }
+    }
+
     /// Create response method
     #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_response"))]
     pub async fn create_response(
