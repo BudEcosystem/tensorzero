@@ -834,7 +834,7 @@ struct TogetherImageGenerationRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct TogetherImageResponse {
     id: String,
     model: String,
@@ -845,7 +845,7 @@ struct TogetherImageResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct TogetherImageData {
     index: u32,
     url: Option<String>,
@@ -858,7 +858,7 @@ struct TogetherImageData {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct TogetherImageTimings {
     inference: f64,
 }
@@ -1859,19 +1859,25 @@ mod tests {
         }"#;
 
         let response: TogetherImageResponse = serde_json::from_str(response_json).unwrap();
-        
+
         assert_eq!(response.id, "o1TnXqu-2kFHot-958e7e079b9d47e3-PDX");
         assert_eq!(response.model, "black-forest-labs/FLUX.1-schnell");
         assert_eq!(response.object, "list");
         assert_eq!(response.created, None);
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].index, 0);
-        assert_eq!(response.data[0].url, Some("https://api.together.ai/shrt/vcu2cXNQebqphdfe".to_string()));
+        assert_eq!(
+            response.data[0].url,
+            Some("https://api.together.ai/shrt/vcu2cXNQebqphdfe".to_string())
+        );
         assert_eq!(response.data[0].b64_json, None);
         assert_eq!(response.data[0].revised_prompt, None);
         assert!(response.data[0].timings.is_some());
-        assert_eq!(response.data[0].timings.as_ref().unwrap().inference, 0.29318173974752426);
-        
+        assert_eq!(
+            response.data[0].timings.as_ref().unwrap().inference,
+            0.29318173974752426
+        );
+
         // Test with created field present (backward compatibility)
         let response_with_created = r#"{
             "id": "test-id",
@@ -1885,7 +1891,7 @@ mod tests {
                 }
             ]
         }"#;
-        
+
         let response2: TogetherImageResponse = serde_json::from_str(response_with_created).unwrap();
         assert_eq!(response2.created, Some(1234567890));
     }
