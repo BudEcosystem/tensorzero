@@ -1015,6 +1015,26 @@ impl std::fmt::Display for ErrorDetails {
 
 impl std::error::Error for Error {}
 
+impl Error {
+    /// Convert error to OpenAI-compatible error format
+    pub fn to_openai_error(&self) -> serde_json::Value {
+        json!({
+            "error": {
+                "message": self.to_string(),
+                "type": match self.get_details() {
+                    ErrorDetails::InvalidRequest { .. } => "invalid_request_error",
+                    ErrorDetails::ApiKeyMissing { .. } => "authentication_error",
+                    ErrorDetails::BadCredentialsPreInference { .. } => "authentication_error",
+                    ErrorDetails::CapabilityNotSupported { .. } => "invalid_request_error",
+                    ErrorDetails::InferenceServer { .. } => "server_error",
+                    _ => "internal_error"
+                },
+                "code": None::<String>
+            }
+        })
+    }
+}
+
 impl IntoResponse for Error {
     /// Log the error and convert it into an Axum response
     fn into_response(self) -> Response {

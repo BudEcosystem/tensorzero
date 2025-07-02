@@ -12,6 +12,9 @@ debug = true
 enable_template_filesystem_access = true
 export.otlp.traces.enabled = true
 
+[gateway.authentication]
+enabled = false
+
 [object_storage]
 type = "disabled"
 

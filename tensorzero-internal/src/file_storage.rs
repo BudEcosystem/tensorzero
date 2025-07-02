@@ -288,10 +288,24 @@ pub fn validate_batch_file(
     }
 
     // Basic UTF-8 validation
-    if std::str::from_utf8(content).is_err() {
-        return Err(Error::new(ErrorDetails::InvalidRequest {
+    let content_str = std::str::from_utf8(content).map_err(|_| {
+        Error::new(ErrorDetails::InvalidRequest {
             message: "File must be valid UTF-8".to_string(),
-        }));
+        })
+    })?;
+
+    // Validate JSONL format
+    for (line_num, line) in content_str.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue; // Skip empty lines
+        }
+        
+        // Try to parse as JSON
+        if let Err(e) = serde_json::from_str::<serde_json::Value>(line) {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!("Invalid JSONL at line {}: {}", line_num + 1, e),
+            }));
+        }
     }
 
     Ok(())

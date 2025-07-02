@@ -1372,8 +1372,10 @@ impl crate::inference::providers::batch::BatchProvider for DummyProvider {
         _client: &reqwest::Client,
         _api_keys: &InferenceCredentials,
     ) -> Result<Vec<u8>, Error> {
-        // Return dummy file content
-        Ok(b"dummy file content".to_vec())
+        // Return dummy JSONL content for batch files
+        let jsonl_content = r#"{"custom_id": "req-1", "method": "POST", "url": "/v1/chat/completions", "body": {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hello"}]}}
+{"custom_id": "req-2", "method": "POST", "url": "/v1/chat/completions", "body": {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "World"}]}}"#;
+        Ok(jsonl_content.as_bytes().to_vec())
     }
 
     async fn delete_file(
