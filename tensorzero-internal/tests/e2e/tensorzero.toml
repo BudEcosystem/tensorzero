@@ -643,6 +643,24 @@ endpoints = ["embedding"]
 type = "openai"
 model_name = "text-embedding-3-small"
 
+# Together image generation models for testing
+[models."flux-schnell"]
+routing = ["together"]
+endpoints = ["image_generation"]
+
+[models."flux-schnell".providers.together]
+type = "together"
+model_name = "black-forest-labs/FLUX.1-schnell"
+
+# Dummy image generation model for testing
+[models."image-generation-test"]
+routing = ["dummy"]
+endpoints = ["image_generation"]
+
+[models."image-generation-test".providers.dummy]
+type = "dummy"
+model_name = "image-generation-test"
+
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                 FUNCTIONS                                  │
