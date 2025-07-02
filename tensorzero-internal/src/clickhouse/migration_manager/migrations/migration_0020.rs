@@ -406,13 +406,13 @@ impl Migration for Migration0020<'_> {
         // Migration0020 is considered successful if any of these conditions are met:
         // 1. All the final tables and views exist with correct structure
         // 2. We're in a transitional state with temporary tables (another process is handling it)
-        
+
         // Check for the main tables
         let inference_by_id_exists =
             check_table_exists(self.clickhouse, "InferenceById", MIGRATION_ID).await?;
         let inference_by_episode_id_exists =
             check_table_exists(self.clickhouse, "InferenceByEpisodeId", MIGRATION_ID).await?;
-        
+
         // If either main table doesn't exist, check for temporary tables indicating ongoing migration
         if !inference_by_id_exists || !inference_by_episode_id_exists {
             // Check if there are any temporary tables from this migration
@@ -423,7 +423,7 @@ impl Migration for Migration0020<'_> {
                 return Ok(true);
             }
         }
-        
+
         // Use the original logic as fallback
         let should_apply = self.should_apply().await?;
         Ok(!should_apply)

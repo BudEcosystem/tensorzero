@@ -3900,39 +3900,39 @@ pub async fn file_upload_handler(
 
         // Process multipart form data
         while let Some(field) = multipart.next_field().await.map_err(|e| {
-        Error::new(ErrorDetails::InvalidRequest {
-            message: format!("Failed to read multipart field: {e}"),
-        })
-    })? {
-        let field_name = field.name().unwrap_or("").to_string();
+            Error::new(ErrorDetails::InvalidRequest {
+                message: format!("Failed to read multipart field: {e}"),
+            })
+        })? {
+            let field_name = field.name().unwrap_or("").to_string();
 
-        match field_name.as_str() {
-            "file" => {
-                filename = field.file_name().map(|s| s.to_string());
-                file_data = Some(
-                    field
-                        .bytes()
-                        .await
-                        .map_err(|e| {
-                            Error::new(ErrorDetails::InvalidRequest {
-                                message: format!("Failed to read file data: {e}"),
-                            })
-                        })?
-                        .to_vec(),
-                );
-            }
-            "purpose" => {
-                purpose = Some(field.text().await.map_err(|e| {
-                    Error::new(ErrorDetails::InvalidRequest {
-                        message: format!("Failed to read purpose field: {e}"),
-                    })
-                })?);
-            }
-            _ => {
-                // Ignore unknown fields
+            match field_name.as_str() {
+                "file" => {
+                    filename = field.file_name().map(|s| s.to_string());
+                    file_data = Some(
+                        field
+                            .bytes()
+                            .await
+                            .map_err(|e| {
+                                Error::new(ErrorDetails::InvalidRequest {
+                                    message: format!("Failed to read file data: {e}"),
+                                })
+                            })?
+                            .to_vec(),
+                    );
+                }
+                "purpose" => {
+                    purpose = Some(field.text().await.map_err(|e| {
+                        Error::new(ErrorDetails::InvalidRequest {
+                            message: format!("Failed to read purpose field: {e}"),
+                        })
+                    })?);
+                }
+                _ => {
+                    // Ignore unknown fields
+                }
             }
         }
-    }
 
         // Validate required fields
         let file_data = file_data.ok_or_else(|| {

@@ -299,7 +299,7 @@ pub fn validate_batch_file(
         if line.trim().is_empty() {
             continue; // Skip empty lines
         }
-        
+
         // Try to parse as JSON
         if let Err(e) = serde_json::from_str::<serde_json::Value>(line) {
             return Err(Error::new(ErrorDetails::InvalidRequest {
