@@ -102,7 +102,7 @@ mod test_batch_file_api_types {
 
     #[test]
     fn test_batch_status_serialization() {
-        let statuses = vec![
+        let statuses = [
             OpenAIBatchStatus::Validating,
             OpenAIBatchStatus::Failed,
             OpenAIBatchStatus::InProgress,
@@ -113,7 +113,7 @@ mod test_batch_file_api_types {
             OpenAIBatchStatus::Cancelled,
         ];
 
-        let expected = vec![
+        let expected = [
             "validating",
             "failed",
             "in_progress",

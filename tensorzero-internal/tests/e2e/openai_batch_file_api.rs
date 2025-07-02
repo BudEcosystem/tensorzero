@@ -108,7 +108,7 @@ async fn test_file_retrieve() {
     let file_id = "file-abc123";
 
     let response = client
-        .get(get_gateway_endpoint(&format!("/v1/files/{}", file_id)))
+        .get(get_gateway_endpoint(&format!("/v1/files/{file_id}")))
         .send()
         .await
         .unwrap();
@@ -131,8 +131,7 @@ async fn test_file_content() {
 
     let response = client
         .get(get_gateway_endpoint(&format!(
-            "/v1/files/{}/content",
-            file_id
+            "/v1/files/{file_id}/content"
         )))
         .send()
         .await
@@ -164,7 +163,7 @@ async fn test_file_delete() {
     let file_id = "file-abc123";
 
     let response = client
-        .delete(get_gateway_endpoint(&format!("/v1/files/{}", file_id)))
+        .delete(get_gateway_endpoint(&format!("/v1/files/{file_id}")))
         .send()
         .await
         .unwrap();
@@ -245,7 +244,7 @@ async fn test_batch_retrieve() {
     let batch_id = "batch_abc123";
 
     let response = client
-        .get(get_gateway_endpoint(&format!("/v1/batches/{}", batch_id)))
+        .get(get_gateway_endpoint(&format!("/v1/batches/{batch_id}")))
         .send()
         .await
         .unwrap();
@@ -305,8 +304,7 @@ async fn test_batch_cancel() {
 
     let response = client
         .post(get_gateway_endpoint(&format!(
-            "/v1/batches/{}/cancel",
-            batch_id
+            "/v1/batches/{batch_id}/cancel"
         )))
         .send()
         .await
