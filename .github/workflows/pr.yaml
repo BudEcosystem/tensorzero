@@ -279,6 +279,86 @@ jobs:
   build-gateway-container:
     uses: ./.github/workflows/build-gateway-container.yml
 
+  sdk-integration-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+        with:
+          cache-provider: "buildjet"
+          save-if: ${{ github.event_name == 'merge_group' }}
+          
+      - name: Cache cargo bin directory
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-tools-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-tools-${{ runner.os }}-
+            
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsasl2-dev
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Create .env file for SDK tests
+        run: |
+          cd gateway/tests/sdk
+          echo "TENSORZERO_BASE_URL=http://localhost:3001" > .env
+          echo "OPENAI_API_KEY=dummy-key-for-testing" >> .env
+          
+      - name: Build the gateway for SDK tests
+        run: cargo build --release --bin gateway --features e2e_tests
+        
+      - name: Launch the gateway for SDK tests
+        run: |
+          cargo run --release --bin gateway --features e2e_tests -- --config-file gateway/tests/sdk/test_config_ci.toml > sdk_gateway_logs.txt 2>&1 &
+          GATEWAY_PID=$!
+          echo "GATEWAY_PID=$GATEWAY_PID" >> $GITHUB_ENV
+          
+          # Wait for gateway to be healthy
+          count=0
+          max_attempts=30
+          while ! curl -s -f http://localhost:3001/health >/dev/null 2>&1; do
+            echo "Waiting for gateway to be healthy..."
+            sleep 1
+            count=$((count + 1))
+            if [ $count -ge $max_attempts ]; then
+              echo "Gateway failed to become healthy after $max_attempts attempts"
+              cat sdk_gateway_logs.txt
+              exit 1
+            fi
+          done
+          echo "Gateway is healthy and ready for SDK tests"
+          
+      - name: Run SDK integration tests
+        run: |
+          cd gateway/tests/sdk
+          # Use the CI-specific test runner script
+          ./run_tests_ci.sh
+          
+      - name: Print gateway logs
+        if: always()
+        run: cat sdk_gateway_logs.txt
+        
+      - name: Cleanup gateway process
+        if: always()
+        run: |
+          if [ ! -z "$GATEWAY_PID" ]; then
+            kill $GATEWAY_PID || true
+          fi
+
   performance-test:
     # Run performance tests to detect regressions
     runs-on: ubuntu-latest
@@ -424,6 +504,7 @@ jobs:
         check-docker-compose,
         validate,
         clickhouse-tests,
+        sdk-integration-tests,
         performance-test
       ]
     runs-on: ubuntu-latest

@@ -506,7 +506,7 @@ pub struct Usage {
     pub output_tokens: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Latency {
     Streaming {

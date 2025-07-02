@@ -1,7 +1,7 @@
 use futures::{Stream, StreamExt, TryStreamExt};
 use lazy_static::lazy_static;
 use reqwest::multipart::{Form, Part};
-use reqwest::StatusCode;
+use reqwest::{Client, StatusCode};
 use reqwest_eventsource::{Event, RequestBuilderExt};
 use secrecy::{ExposeSecret, SecretString};
 use serde::de::IntoDeserializer;
@@ -30,6 +30,11 @@ use crate::embeddings::{EmbeddingProvider, EmbeddingProviderResponse, EmbeddingR
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{DisplayOrDebugGateway, Error, ErrorDetails};
 use crate::inference::providers::batch::BatchProvider;
+use crate::images::{
+    ImageData, ImageEditProvider, ImageEditProviderResponse, ImageEditRequest,
+    ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
+    ImageVariationProvider, ImageVariationProviderResponse, ImageVariationRequest,
+};
 use crate::inference::providers::provider_trait::InferenceProvider;
 use crate::openai_batch::{ListBatchesParams, ListBatchesResponse, OpenAIBatchObject, OpenAIFileObject};
 use crate::inference::types::batch::{BatchRequestRow, PollBatchInferenceResponse};
@@ -1391,6 +1396,412 @@ impl TextToSpeechProvider for OpenAIProvider {
     }
 }
 
+// Image generation implementation
+impl ImageGenerationProvider for OpenAIProvider {
+    async fn generate_image(
+        &self,
+        request: &ImageGenerationRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageGenerationProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url =
+            get_image_generation_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+
+        // Build request body with model-specific parameters
+        let mut request_body = json!({
+            "model": self.model_name,
+            "prompt": request.prompt,
+        });
+
+        // Add optional parameters
+        if let Some(n) = request.n {
+            request_body["n"] = json!(n);
+        }
+        if let Some(size) = &request.size {
+            request_body["size"] = json!(size.as_str());
+        }
+        if let Some(quality) = &request.quality {
+            request_body["quality"] = json!(quality.as_str());
+        }
+        if let Some(style) = &request.style {
+            request_body["style"] = json!(style.as_str());
+        }
+        if let Some(response_format) = &request.response_format {
+            request_body["response_format"] = json!(response_format.as_str());
+        }
+        if let Some(user) = &request.user {
+            request_body["user"] = json!(user);
+        }
+
+        // GPT-Image-1 specific parameters
+        if let Some(background) = &request.background {
+            request_body["background"] = json!(background.as_str());
+        }
+        if let Some(moderation) = &request.moderation {
+            request_body["moderation"] = json!(moderation.as_str());
+        }
+        if let Some(output_compression) = request.output_compression {
+            request_body["output_compression"] = json!(output_compression);
+        }
+        if let Some(output_format) = &request.output_format {
+            request_body["output_format"] = json!(output_format.as_str());
+        }
+
+        let request_json = serde_json::to_string(&request_body).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!("Failed to serialize image generation request: {e}"),
+            })
+        })?;
+
+        let mut request_builder = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .body(request_json.clone());
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send image generation request: {e}"),
+                status_code: None,
+                raw_request: Some(request_json.clone()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let response_body = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to read image generation response: {e}"),
+                    status_code: None,
+                    raw_request: Some(request_json.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: OpenAIImageResponse =
+                serde_json::from_str(&response_body).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        message: format!("Failed to parse image generation response: {e}"),
+                        status_code: None,
+                        raw_request: Some(request_json.clone()),
+                        raw_response: Some(response_body.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(ImageGenerationProviderResponse {
+                id: request.id,
+                created: response.created,
+                data: response
+                    .data
+                    .into_iter()
+                    .map(|d| ImageData {
+                        url: d.url,
+                        b64_json: d.b64_json,
+                        revised_prompt: d.revised_prompt,
+                    })
+                    .collect(),
+                raw_request: request_json.clone(),
+                raw_response: response_body,
+                usage: Usage {
+                    input_tokens: 0, // Images don't have token-based usage
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                &request_json,
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Image edit implementation
+impl ImageEditProvider for OpenAIProvider {
+    async fn edit_image(
+        &self,
+        request: &ImageEditRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageEditProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_image_edit_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+
+        // Create multipart form
+        let mut form = Form::new()
+            .text("model", self.model_name.clone())
+            .text("prompt", request.prompt.clone())
+            .part(
+                "image",
+                Part::bytes(request.image.clone())
+                    .file_name(request.image_filename.clone())
+                    .mime_str("image/png")
+                    .map_err(|e| {
+                        Error::new(ErrorDetails::InferenceClient {
+                            message: format!("Failed to set image MIME type: {e}"),
+                            status_code: None,
+                            raw_request: None,
+                            raw_response: None,
+                            provider_type: PROVIDER_TYPE.to_string(),
+                        })
+                    })?,
+            );
+
+        // Add mask if provided
+        if let Some(mask_data) = &request.mask {
+            if let Some(mask_filename) = &request.mask_filename {
+                form = form.part(
+                    "mask",
+                    Part::bytes(mask_data.clone())
+                        .file_name(mask_filename.clone())
+                        .mime_str("image/png")
+                        .map_err(|e| {
+                            Error::new(ErrorDetails::InferenceClient {
+                                message: format!("Failed to set mask MIME type: {e}"),
+                                status_code: None,
+                                raw_request: None,
+                                raw_response: None,
+                                provider_type: PROVIDER_TYPE.to_string(),
+                            })
+                        })?,
+                );
+            }
+        }
+
+        // Add optional parameters
+        if let Some(n) = request.n {
+            form = form.text("n", n.to_string());
+        }
+        if let Some(size) = &request.size {
+            form = form.text("size", size.as_str());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(user) = &request.user {
+            form = form.text("user", user.clone());
+        }
+
+        // Model-specific parameters
+        if let Some(background) = &request.background {
+            form = form.text("background", background.as_str());
+        }
+        if let Some(quality) = &request.quality {
+            form = form.text("quality", quality.as_str());
+        }
+        if let Some(output_compression) = request.output_compression {
+            form = form.text("output_compression", output_compression.to_string());
+        }
+        if let Some(output_format) = &request.output_format {
+            form = form.text("output_format", output_format.as_str());
+        }
+
+        let mut request_builder = client.post(url).multipart(form);
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send image edit request: {e}"),
+                status_code: None,
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let response_body = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to read image edit response: {e}"),
+                    status_code: None,
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: OpenAIImageResponse =
+                serde_json::from_str(&response_body).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        message: format!("Failed to parse image edit response: {e}"),
+                        status_code: None,
+                        raw_request: None,
+                        raw_response: Some(response_body.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(ImageEditProviderResponse {
+                id: request.id,
+                created: response.created,
+                data: response
+                    .data
+                    .into_iter()
+                    .map(|d| ImageData {
+                        url: d.url,
+                        b64_json: d.b64_json,
+                        revised_prompt: d.revised_prompt,
+                    })
+                    .collect(),
+                raw_request: "multipart form data".to_string(), // Can't easily serialize multipart
+                raw_response: response_body,
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                "multipart form data",
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Image variation implementation
+impl ImageVariationProvider for OpenAIProvider {
+    async fn create_image_variation(
+        &self,
+        request: &ImageVariationRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageVariationProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url =
+            get_image_variation_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+
+        // Create multipart form
+        let mut form = Form::new().text("model", self.model_name.clone()).part(
+            "image",
+            Part::bytes(request.image.clone())
+                .file_name(request.image_filename.clone())
+                .mime_str("image/png")
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        message: format!("Failed to set image MIME type: {e}"),
+                        status_code: None,
+                        raw_request: None,
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+        );
+
+        // Add optional parameters
+        if let Some(n) = request.n {
+            form = form.text("n", n.to_string());
+        }
+        if let Some(size) = &request.size {
+            form = form.text("size", size.as_str());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(user) = &request.user {
+            form = form.text("user", user.clone());
+        }
+
+        let mut request_builder = client.post(url).multipart(form);
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send image variation request: {e}"),
+                status_code: None,
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let response_body = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to read image variation response: {e}"),
+                    status_code: None,
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: OpenAIImageResponse =
+                serde_json::from_str(&response_body).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        message: format!("Failed to parse image variation response: {e}"),
+                        status_code: None,
+                        raw_request: None,
+                        raw_response: Some(response_body.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(ImageVariationProviderResponse {
+                id: request.id,
+                created: response.created,
+                data: response
+                    .data
+                    .into_iter()
+                    .map(|d| ImageData {
+                        url: d.url,
+                        b64_json: d.b64_json,
+                        revised_prompt: d.revised_prompt,
+                    })
+                    .collect(),
+                raw_request: "multipart form data".to_string(),
+                raw_response: response_body,
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                "multipart form data",
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
 pub async fn convert_stream_error(provider_type: String, e: reqwest_eventsource::Error) -> Error {
     let message = e.to_string();
     let mut raw_response = None;
@@ -1567,6 +1978,32 @@ fn get_audio_translation_url(base_url: &Url) -> Result<Url, Error> {
 
 fn get_text_to_speech_url(base_url: &Url) -> Result<Url, Error> {
     join_url(base_url, "audio/speech")
+}
+
+fn get_image_generation_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "images/generations")
+}
+
+fn get_image_edit_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "images/edits")
+}
+
+fn get_image_variation_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "images/variations")
+}
+
+// OpenAI Image API response types
+#[derive(Debug, Deserialize)]
+struct OpenAIImageResponse {
+    created: u64,
+    data: Vec<OpenAIImageData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIImageData {
+    url: Option<String>,
+    b64_json: Option<String>,
+    revised_prompt: Option<String>,
 }
 
 pub(super) fn handle_openai_error(
@@ -3048,6 +3485,10 @@ struct OpenAIBatchFileResponse {
     body: OpenAIResponse,
 }
 
+use crate::realtime::{
+    RealtimeSessionProvider, RealtimeSessionRequest, RealtimeSessionResponse,
+    RealtimeTranscriptionProvider, RealtimeTranscriptionRequest, RealtimeTranscriptionResponse,
+};
 use crate::responses::{
     OpenAIResponse as ResponsesOpenAIResponse, OpenAIResponseCreateParams, ResponseInputItemsList,
     ResponseProvider, ResponseStreamEvent,
@@ -3533,6 +3974,189 @@ fn get_responses_url(base_url: &Url) -> Result<Url, Error> {
             message: format!("Failed to construct responses URL: {e}"),
         })
     })
+}
+
+// Helper function to construct realtime sessions API URL
+fn get_realtime_sessions_url(base_url: &Url) -> Result<Url, Error> {
+    base_url.join("realtime/sessions").map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to construct realtime sessions URL: {e}"),
+        })
+    })
+}
+
+// Helper function to construct realtime transcription sessions API URL
+fn get_realtime_transcription_sessions_url(base_url: &Url) -> Result<Url, Error> {
+    base_url
+        .join("realtime/transcription_sessions")
+        .map_err(|e| {
+            Error::new(ErrorDetails::Config {
+                message: format!("Failed to construct realtime transcription sessions URL: {e}"),
+            })
+        })
+}
+
+#[async_trait::async_trait]
+impl RealtimeSessionProvider for OpenAIProvider {
+    async fn create_session(
+        &self,
+        request: &RealtimeSessionRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<RealtimeSessionResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url =
+            get_realtime_sessions_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
+
+        let mut request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json");
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.json(&request).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending request to OpenAI Realtime Sessions API: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                raw_response: None,
+            })
+        })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: RealtimeSessionResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                &serde_json::to_string(&request).unwrap_or_default(),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RealtimeTranscriptionProvider for OpenAIProvider {
+    async fn create_transcription_session(
+        &self,
+        request: &RealtimeTranscriptionRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<RealtimeTranscriptionResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_realtime_transcription_sessions_url(
+            self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL),
+        )?;
+
+        let mut request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json");
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let res = request_builder.json(&request).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending request to OpenAI Realtime Transcription Sessions API: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                raw_response: None,
+            })
+        })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: RealtimeTranscriptionResponse = serde_json::from_str(&raw_response)
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(response)
+        } else {
+            Err(handle_openai_error(
+                &serde_json::to_string(&request).unwrap_or_default(),
+                res.status(),
+                &res.text().await.map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing error response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(serde_json::to_string(&request).unwrap_or_default()),
+                        raw_response: None,
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
