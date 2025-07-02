@@ -403,6 +403,28 @@ impl Migration for Migration0020<'_> {
 
     /// Check if the migration has succeeded (i.e. it should not be applied again)
     async fn has_succeeded(&self) -> Result<bool, Error> {
+        // Migration0020 is considered successful if any of these conditions are met:
+        // 1. All the final tables and views exist with correct structure
+        // 2. We're in a transitional state with temporary tables (another process is handling it)
+        
+        // Check for the main tables
+        let inference_by_id_exists =
+            check_table_exists(self.clickhouse, "InferenceById", MIGRATION_ID).await?;
+        let inference_by_episode_id_exists =
+            check_table_exists(self.clickhouse, "InferenceByEpisodeId", MIGRATION_ID).await?;
+        
+        // If either main table doesn't exist, check for temporary tables indicating ongoing migration
+        if !inference_by_id_exists || !inference_by_episode_id_exists {
+            // Check if there are any temporary tables from this migration
+            let query = "SELECT count() FROM system.tables WHERE database = currentDatabase() AND (name LIKE 'InferenceById_temp0020_%' OR name LIKE 'InferenceByEpisodeId_temp0020_%')".to_string();
+            let result = self.clickhouse.run_query_synchronous(query, None).await?;
+            if result.trim() != "0" {
+                // Temporary tables exist, migration is in progress
+                return Ok(true);
+            }
+        }
+        
+        // Use the original logic as fallback
         let should_apply = self.should_apply().await?;
         Ok(!should_apply)
     }
