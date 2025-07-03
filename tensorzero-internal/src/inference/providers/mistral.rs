@@ -8,6 +8,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 use url::Url;
+use uuid::Uuid;
 
 use crate::{
     cache::ModelProviderRequest,
@@ -15,9 +16,10 @@ use crate::{
     error::{DisplayOrDebugGateway, Error, ErrorDetails},
     inference::types::{
         batch::{BatchRequestRow, PollBatchInferenceResponse, StartBatchProviderInferenceResponse},
-        ContentBlockChunk, ContentBlockOutput, FinishReason, Latency, ModelInferenceRequest,
-        ModelInferenceRequestJsonMode, PeekableProviderInferenceResponseStream,
-        ProviderInferenceResponse, ProviderInferenceResponseArgs, ProviderInferenceResponseChunk,
+        current_timestamp, ContentBlockChunk, ContentBlockOutput, FinishReason, Latency,
+        ModelInferenceRequest, ModelInferenceRequestJsonMode,
+        PeekableProviderInferenceResponseStream, ProviderInferenceResponse,
+        ProviderInferenceResponseArgs, ProviderInferenceResponseChunk,
         ProviderInferenceResponseStreamInner, TextChunk, Usage,
     },
     model::{build_creds_caching_default, Credential, CredentialLocation, ModelProvider},
@@ -792,6 +794,474 @@ fn mistral_to_tensorzero_chunk(
     ))
 }
 
+// Mistral Embedding Types
+#[derive(Debug, Serialize)]
+struct MistralEmbeddingRequest<'a> {
+    model: &'a str,
+    input: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encoding_format: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MistralEmbeddingResponse {
+    #[serde(rename = "id")]
+    _id: String,
+    #[serde(rename = "object")]
+    _object: String,
+    data: Vec<MistralEmbeddingData>,
+    #[serde(rename = "model")]
+    _model: String,
+    usage: MistralEmbeddingUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct MistralEmbeddingData {
+    #[serde(rename = "object")]
+    _object: String,
+    embedding: Vec<f32>,
+    index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct MistralEmbeddingUsage {
+    prompt_tokens: u32,
+    #[serde(rename = "total_tokens")]
+    _total_tokens: u32,
+}
+
+impl From<MistralEmbeddingUsage> for Usage {
+    fn from(usage: MistralEmbeddingUsage) -> Self {
+        Usage {
+            input_tokens: usage.prompt_tokens,
+            output_tokens: 0, // Embeddings don't have output tokens
+        }
+    }
+}
+
+// Helper function to get embedding URL
+fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
+    base_url.join("embeddings").map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to construct Mistral embedding URL: {e}"),
+        })
+    })
+}
+
+use crate::embeddings::{
+    EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest,
+};
+
+impl EmbeddingProvider for MistralProvider {
+    async fn embed(
+        &self,
+        request: &EmbeddingRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<EmbeddingProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+
+        // Convert input to vector of strings
+        let input_texts: Vec<&str> = match &request.input {
+            EmbeddingInput::Single(text) => vec![text.as_str()],
+            EmbeddingInput::Batch(texts) => texts.iter().map(|s| s.as_str()).collect(),
+        };
+
+        let mistral_request = MistralEmbeddingRequest {
+            model: &self.model_name,
+            input: input_texts,
+            encoding_format: request.encoding_format.as_deref(),
+        };
+
+        let request_url = get_embedding_url(&MISTRAL_API_BASE)?;
+        let start_time = Instant::now();
+
+        let raw_request = serde_json::to_string(&mistral_request).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing Mistral embedding request: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
+        let res = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret())
+            .body(raw_request.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Mistral: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
+
+            let response: MistralEmbeddingResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: Some(raw_request.clone()),
+                        raw_response: Some(raw_response.clone()),
+                    })
+                })?;
+
+            // Extract embeddings in the order they were requested
+            let mut embeddings: Vec<Vec<f32>> = vec![vec![]; response.data.len()];
+            for data in response.data {
+                if data.index < embeddings.len() {
+                    embeddings[data.index] = data.embedding;
+                }
+            }
+
+            let usage = Usage::from(response.usage);
+
+            Ok(EmbeddingProviderResponse::new(
+                embeddings,
+                request.input.clone(),
+                raw_request,
+                raw_response,
+                usage,
+                latency,
+            ))
+        } else {
+            let status = res.status();
+            let error_body = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request),
+                    raw_response: None,
+                })
+            })?;
+            match status {
+                StatusCode::BAD_REQUEST
+                | StatusCode::UNAUTHORIZED
+                | StatusCode::FORBIDDEN
+                | StatusCode::TOO_MANY_REQUESTS => Err(ErrorDetails::InferenceClient {
+                    message: error_body,
+                    status_code: Some(status),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: None,
+                    raw_response: None,
+                }
+                .into()),
+                _ => Err(ErrorDetails::InferenceServer {
+                    message: error_body,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: None,
+                    raw_response: None,
+                }
+                .into()),
+            }
+        }
+    }
+}
+
+// Mistral Moderation/Classification Types
+#[derive(Debug, Serialize)]
+struct MistralClassifyRequest<'a> {
+    inputs: Vec<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MistralClassifyResponse {
+    results: Vec<MistralClassificationResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MistralClassificationResult {
+    categories: MistralCategories,
+    category_scores: MistralCategoryScores,
+}
+
+#[derive(Debug, Deserialize)]
+struct MistralCategories {
+    sexual: bool,
+    #[serde(rename = "hate_and_discrimination")]
+    hate_and_discrimination: bool,
+    violence_and_threats: bool,
+    #[serde(rename = "dangerous_and_criminal_content")]
+    _dangerous_and_criminal_content: bool,
+    #[serde(rename = "selfharm")]
+    self_harm: bool,
+    #[serde(rename = "health")]
+    _health: bool,
+    #[serde(rename = "financial")]
+    _financial: bool,
+    #[serde(rename = "law")]
+    _law: bool,
+    #[serde(rename = "pii")]
+    _pii: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct MistralCategoryScores {
+    sexual: f32,
+    #[serde(rename = "hate_and_discrimination")]
+    hate_and_discrimination: f32,
+    violence_and_threats: f32,
+    #[serde(rename = "dangerous_and_criminal_content")]
+    _dangerous_and_criminal_content: f32,
+    #[serde(rename = "selfharm")]
+    self_harm: f32,
+    #[serde(rename = "health")]
+    _health: f32,
+    #[serde(rename = "financial")]
+    _financial: f32,
+    #[serde(rename = "law")]
+    _law: f32,
+    #[serde(rename = "pii")]
+    _pii: f32,
+}
+
+// Helper function to get classification URL
+fn get_classification_url(base_url: &Url) -> Result<Url, Error> {
+    base_url
+        .join("classifiers/moderation/classify")
+        .map_err(|e| {
+            Error::new(ErrorDetails::Config {
+                message: format!("Failed to construct Mistral classification URL: {e}"),
+            })
+        })
+}
+
+use crate::moderation::{
+    ModerationCategories, ModerationCategoryScores, ModerationProvider, ModerationProviderResponse,
+    ModerationRequest, ModerationResult,
+};
+
+impl ModerationProvider for MistralProvider {
+    async fn moderate(
+        &self,
+        request: &ModerationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ModerationProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+
+        // Convert input to vector of strings
+        let input_texts: Vec<&str> = request.input.as_vec();
+
+        let mistral_request = MistralClassifyRequest {
+            inputs: input_texts.clone(),
+        };
+
+        let request_url = get_classification_url(&MISTRAL_API_BASE)?;
+        let start_time = Instant::now();
+
+        let raw_request = serde_json::to_string(&mistral_request).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing Mistral classification request: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
+        let res = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret())
+            .body(raw_request.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Mistral: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
+
+            let response: MistralClassifyResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: Some(raw_request.clone()),
+                        raw_response: Some(raw_response.clone()),
+                    })
+                })?;
+
+            // Convert Mistral results to TensorZero format
+            let results: Vec<ModerationResult> = response
+                .results
+                .into_iter()
+                .map(|result| {
+                    // Map Mistral categories to OpenAI-compatible categories
+                    let categories = ModerationCategories {
+                        hate: result.categories.hate_and_discrimination,
+                        hate_threatening: result.categories.hate_and_discrimination
+                            && result.categories.violence_and_threats,
+                        harassment: result.categories.hate_and_discrimination,
+                        harassment_threatening: result.categories.hate_and_discrimination
+                            && result.categories.violence_and_threats,
+                        self_harm: result.categories.self_harm,
+                        self_harm_intent: result.categories.self_harm,
+                        self_harm_instructions: result.categories.self_harm,
+                        sexual: result.categories.sexual,
+                        sexual_minors: result.categories.sexual, // Mistral doesn't distinguish minors
+                        violence: result.categories.violence_and_threats,
+                        violence_graphic: result.categories.violence_and_threats,
+                    };
+
+                    let category_scores = ModerationCategoryScores {
+                        hate: result.category_scores.hate_and_discrimination,
+                        hate_threatening: result
+                            .category_scores
+                            .hate_and_discrimination
+                            .min(result.category_scores.violence_and_threats),
+                        harassment: result.category_scores.hate_and_discrimination,
+                        harassment_threatening: result
+                            .category_scores
+                            .hate_and_discrimination
+                            .min(result.category_scores.violence_and_threats),
+                        self_harm: result.category_scores.self_harm,
+                        self_harm_intent: result.category_scores.self_harm,
+                        self_harm_instructions: result.category_scores.self_harm,
+                        sexual: result.category_scores.sexual,
+                        sexual_minors: result.category_scores.sexual,
+                        violence: result.category_scores.violence_and_threats,
+                        violence_graphic: result.category_scores.violence_and_threats,
+                    };
+
+                    // Determine if content is flagged (any category is true)
+                    let flagged = categories.hate
+                        || categories.hate_threatening
+                        || categories.harassment
+                        || categories.harassment_threatening
+                        || categories.self_harm
+                        || categories.self_harm_intent
+                        || categories.self_harm_instructions
+                        || categories.sexual
+                        || categories.sexual_minors
+                        || categories.violence
+                        || categories.violence_graphic;
+
+                    ModerationResult {
+                        flagged,
+                        categories,
+                        category_scores,
+                    }
+                })
+                .collect();
+
+            // Calculate token usage (estimate based on input length)
+            let total_tokens: u32 = input_texts
+                .iter()
+                .map(|s| s.split_whitespace().count() as u32 * 2)
+                .sum();
+            let usage = Usage {
+                input_tokens: total_tokens,
+                output_tokens: 0,
+            };
+
+            Ok(ModerationProviderResponse {
+                id: Uuid::now_v7(),
+                input: request.input.clone(),
+                results,
+                created: current_timestamp(),
+                model: self.model_name.clone(),
+                raw_request,
+                raw_response,
+                usage,
+                latency,
+            })
+        } else {
+            let status = res.status();
+            let error_body = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request),
+                    raw_response: None,
+                })
+            })?;
+            match status {
+                StatusCode::BAD_REQUEST
+                | StatusCode::UNAUTHORIZED
+                | StatusCode::FORBIDDEN
+                | StatusCode::TOO_MANY_REQUESTS => Err(ErrorDetails::InferenceClient {
+                    message: error_body,
+                    status_code: Some(status),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: None,
+                    raw_response: None,
+                }
+                .into()),
+                _ => Err(ErrorDetails::InferenceServer {
+                    message: error_body,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: None,
+                    raw_response: None,
+                }
+                .into()),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
@@ -1231,5 +1701,144 @@ mod tests {
             result.unwrap_err().get_owned_details(),
             ErrorDetails::Config { message } if message.contains("Invalid api_key_location")
         ));
+    }
+
+    #[test]
+    fn test_mistral_embedding_usage_conversion() {
+        let usage = MistralEmbeddingUsage {
+            prompt_tokens: 100,
+            _total_tokens: 100,
+        };
+
+        let converted: Usage = usage.into();
+        assert_eq!(converted.input_tokens, 100);
+        assert_eq!(converted.output_tokens, 0);
+    }
+
+    #[test]
+    fn test_mistral_embedding_request_serialization() {
+        let request = MistralEmbeddingRequest {
+            model: "mistral-embed",
+            input: vec!["Hello, world!", "How are you?"],
+            encoding_format: Some("float"),
+        };
+
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["model"], "mistral-embed");
+        assert_eq!(serialized["input"][0], "Hello, world!");
+        assert_eq!(serialized["input"][1], "How are you?");
+        assert_eq!(serialized["encoding_format"], "float");
+    }
+
+    #[test]
+    fn test_mistral_embedding_response_deserialization() {
+        let json_response = r#"{
+            "id": "embd-aad2b3a4a65e48ccb50e9e4cc1679a2a",
+            "object": "list",
+            "data": [
+                {
+                    "object": "embedding",
+                    "embedding": [0.1, 0.2, 0.3],
+                    "index": 0
+                },
+                {
+                    "object": "embedding",
+                    "embedding": [0.4, 0.5, 0.6],
+                    "index": 1
+                }
+            ],
+            "model": "mistral-embed",
+            "usage": {
+                "prompt_tokens": 10,
+                "total_tokens": 10
+            }
+        }"#;
+
+        let response: MistralEmbeddingResponse = serde_json::from_str(json_response).unwrap();
+        assert_eq!(response._id, "embd-aad2b3a4a65e48ccb50e9e4cc1679a2a");
+        assert_eq!(response._object, "list");
+        assert_eq!(response._model, "mistral-embed");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+        assert_eq!(response.data[0].index, 0);
+        assert_eq!(response.data[1].embedding, vec![0.4, 0.5, 0.6]);
+        assert_eq!(response.data[1].index, 1);
+        assert_eq!(response.usage.prompt_tokens, 10);
+        assert_eq!(response.usage._total_tokens, 10);
+    }
+
+    #[test]
+    fn test_mistral_classification_request_serialization() {
+        let request = MistralClassifyRequest {
+            inputs: vec!["This is safe content", "This might be inappropriate"],
+        };
+
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["inputs"][0], "This is safe content");
+        assert_eq!(serialized["inputs"][1], "This might be inappropriate");
+    }
+
+    #[test]
+    fn test_mistral_classification_response_deserialization() {
+        let json_response = r#"{
+            "results": [
+                {
+                    "categories": {
+                        "sexual": false,
+                        "hate_and_discrimination": false,
+                        "violence_and_threats": false,
+                        "dangerous_and_criminal_content": false,
+                        "selfharm": false,
+                        "health": false,
+                        "financial": false,
+                        "law": false,
+                        "pii": false
+                    },
+                    "category_scores": {
+                        "sexual": 0.0001,
+                        "hate_and_discrimination": 0.0002,
+                        "violence_and_threats": 0.0003,
+                        "dangerous_and_criminal_content": 0.0004,
+                        "selfharm": 0.0005,
+                        "health": 0.0006,
+                        "financial": 0.0007,
+                        "law": 0.0008,
+                        "pii": 0.0009
+                    }
+                }
+            ]
+        }"#;
+
+        let response: MistralClassifyResponse = serde_json::from_str(json_response).unwrap();
+        assert_eq!(response.results.len(), 1);
+        let result = &response.results[0];
+        assert!(!result.categories.sexual);
+        assert!(!result.categories.hate_and_discrimination);
+        assert!(!result.categories.violence_and_threats);
+        assert!(!result.categories.self_harm);
+        assert_eq!(result.category_scores.sexual, 0.0001);
+        assert_eq!(result.category_scores.hate_and_discrimination, 0.0002);
+        assert_eq!(result.category_scores.violence_and_threats, 0.0003);
+        assert_eq!(result.category_scores.self_harm, 0.0005);
+    }
+
+    #[test]
+    fn test_get_embedding_url() {
+        let base_url = Url::parse("https://api.mistral.ai/v1/").unwrap();
+        let embedding_url = get_embedding_url(&base_url).unwrap();
+        assert_eq!(
+            embedding_url.as_str(),
+            "https://api.mistral.ai/v1/embeddings"
+        );
+    }
+
+    #[test]
+    fn test_get_classification_url() {
+        let base_url = Url::parse("https://api.mistral.ai/v1/").unwrap();
+        let classification_url = get_classification_url(&base_url).unwrap();
+        assert_eq!(
+            classification_url.as_str(),
+            "https://api.mistral.ai/v1/classifiers/moderation/classify"
+        );
     }
 }

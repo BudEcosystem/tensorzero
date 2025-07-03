@@ -118,9 +118,9 @@ impl ModelConfig {
     ) -> Result<crate::embeddings::EmbeddingResponse, Error> {
         // Verify this model supports embeddings
         if !self.supports_endpoint(EndpointCapability::Embedding) {
-            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+            return Err(Error::new(ErrorDetails::ModelNotConfiguredForCapability {
+                model_name: model_name.to_string(),
                 capability: EndpointCapability::Embedding.as_str().to_string(),
-                provider: model_name.to_string(),
             }));
         }
 
@@ -1959,6 +1959,7 @@ impl ModelProvider {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             ProviderConfig::Fireworks(provider) => {
+            ProviderConfig::Mistral(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
@@ -2674,9 +2675,9 @@ impl ModelTableExt for ModelTable {
             if model.supports_endpoint(capability) {
                 Ok(Some(model))
             } else {
-                Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                Err(Error::new(ErrorDetails::ModelNotConfiguredForCapability {
+                    model_name: key.to_string(),
                     capability: capability.as_str().to_string(),
-                    provider: key.to_string(),
                 }))
             }
         } else {
@@ -3816,7 +3817,9 @@ mod tests {
                     .await;
                 assert!(result.is_err());
                 let error = result.unwrap_err();
-                assert!(error.to_string().contains("does not support capability"));
+                assert!(error
+                    .to_string()
+                    .contains("is not configured to support capability"));
 
                 // Test getting non-existent model
                 let result = model_table
@@ -3863,7 +3866,9 @@ mod tests {
         let result = model.embed(&request, "test_model", &clients).await;
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("does not support capability"));
+        assert!(error
+            .to_string()
+            .contains("is not configured to support capability"));
     }
 
     #[traced_test]
