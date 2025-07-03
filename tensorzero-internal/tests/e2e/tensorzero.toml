@@ -664,6 +664,15 @@ endpoints = ["image_generation"]
 type = "dummy"
 model_name = "image-generation-test"
 
+# Together TTS models for testing
+[models."together-tts"]
+routing = ["together"]
+endpoints = ["text_to_speech"]
+
+[models."together-tts".providers.together]
+type = "together"
+model_name = "cartesia/sonic"
+
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                 FUNCTIONS                                  │

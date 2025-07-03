@@ -22,6 +22,10 @@ use crate::inference::types::{
 use crate::model::{build_creds_caching_default, Credential, CredentialLocation, ModelProvider};
 use crate::tool::ToolChoice;
 use crate::{
+    audio::{
+        AudioOutputFormat, AudioVoice, TextToSpeechProvider, TextToSpeechProviderResponse,
+        TextToSpeechRequest,
+    },
     endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails},
     images::{
@@ -815,6 +819,49 @@ struct TogetherChatChunk {
     usage: Option<OpenAIUsage>,
 }
 
+// Audio TTS types
+#[derive(Debug, Serialize)]
+struct TogetherTextToSpeechRequest {
+    model: String,
+    input: String,
+    voice: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
+}
+
+fn map_audio_voice_to_together(voice: &AudioVoice) -> String {
+    match voice {
+        AudioVoice::Alloy => "helpful woman".to_string(),
+        AudioVoice::Echo => "laidback woman".to_string(),
+        AudioVoice::Fable => "meditation lady".to_string(),
+        AudioVoice::Onyx => "newsman".to_string(),
+        AudioVoice::Nova => "friendly sidekick".to_string(),
+        AudioVoice::Shimmer => "british reading lady".to_string(),
+        AudioVoice::Ash => "barbershop man".to_string(),
+        AudioVoice::Ballad => "indian lady".to_string(),
+        AudioVoice::Coral => "german conversational woman".to_string(),
+        AudioVoice::Sage => "pilot over intercom".to_string(),
+        AudioVoice::Verse => "australian customer support man".to_string(),
+        AudioVoice::Other(voice_name) => voice_name.clone(),
+    }
+}
+
+fn get_audio_speech_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("audio/generations").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
 // Image generation types
 #[derive(Debug, Serialize)]
 struct TogetherImageGenerationRequest {
@@ -975,6 +1022,109 @@ impl ImageGenerationProvider for TogetherProvider {
                 raw_response: response_body,
                 usage: Usage {
                     input_tokens: 0, // Together doesn't provide token usage for images
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            Err(handle_openai_error(
+                &request_json,
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Text-to-Speech implementation
+impl TextToSpeechProvider for TogetherProvider {
+    async fn generate_speech(
+        &self,
+        request: &TextToSpeechRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<TextToSpeechProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_audio_speech_url(&TOGETHER_API_BASE)?;
+
+        // Map output format
+        let response_format = match &request.response_format {
+            Some(AudioOutputFormat::Mp3) | None => Some("mp3".to_string()),
+            Some(AudioOutputFormat::Pcm) => Some("raw".to_string()),
+            Some(format) => {
+                return Err(Error::new(ErrorDetails::InvalidRequest {
+                    message: format!(
+                        "Together TTS does not support output format: {format:?}. Supported formats: mp3, raw (pcm)"
+                    ),
+                }));
+            }
+        };
+
+        // Build Together-specific request
+        let together_request = TogetherTextToSpeechRequest {
+            model: "cartesia/sonic".to_string(), // Together only supports cartesia/sonic
+            input: request.input.clone(),
+            voice: map_audio_voice_to_together(&request.voice),
+            response_format,
+            sample_rate: Some(44100), // Recommended sample rate
+            stream: Some(false),      // Non-streaming for now
+        };
+
+        let request_json = serde_json::to_string(&together_request).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!("Failed to serialize Together TTS request: {e}"),
+            })
+        })?;
+
+        let request_builder = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret())
+            .body(request_json.clone());
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send Together TTS request: {e}"),
+                status_code: e.status(),
+                raw_request: Some(request_json.clone()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let audio_data = res.bytes().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to read Together TTS response: {e}"),
+                    status_code: None,
+                    raw_request: Some(request_json.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let output_format = request
+                .response_format
+                .clone()
+                .unwrap_or(AudioOutputFormat::Mp3);
+
+            Ok(TextToSpeechProviderResponse {
+                id: request.id,
+                audio_data: audio_data.to_vec(),
+                format: output_format,
+                created: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                raw_request: request_json,
+                usage: Usage {
+                    input_tokens: 0, // Together doesn't provide token usage for TTS
                     output_tokens: 0,
                 },
                 latency,
@@ -1896,5 +2046,148 @@ mod tests {
 
         let response2: TogetherImageResponse = serde_json::from_str(response_with_created).unwrap();
         assert_eq!(response2.created, Some(1234567890));
+    }
+
+    #[test]
+    fn test_map_audio_voice_to_together() {
+        // Test all voice mappings
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Alloy),
+            "helpful woman"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Echo),
+            "laidback woman"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Fable),
+            "meditation lady"
+        );
+        assert_eq!(map_audio_voice_to_together(&AudioVoice::Onyx), "newsman");
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Nova),
+            "friendly sidekick"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Shimmer),
+            "british reading lady"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Ash),
+            "barbershop man"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Ballad),
+            "indian lady"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Coral),
+            "german conversational woman"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Sage),
+            "pilot over intercom"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Verse),
+            "australian customer support man"
+        );
+        
+        // Test Other variant
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Other("custom voice".to_string())),
+            "custom voice"
+        );
+    }
+
+    #[test]
+    fn test_together_tts_request_serialization() {
+        let request = TogetherTextToSpeechRequest {
+            model: "cartesia/sonic".to_string(),
+            input: "Hello, world!".to_string(),
+            voice: "helpful woman".to_string(),
+            response_format: Some("mp3".to_string()),
+            sample_rate: Some(44100),
+            stream: Some(false),
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "cartesia/sonic");
+        assert_eq!(parsed["input"], "Hello, world!");
+        assert_eq!(parsed["voice"], "helpful woman");
+        assert_eq!(parsed["response_format"], "mp3");
+        assert_eq!(parsed["sample_rate"], 44100);
+        assert_eq!(parsed["stream"], false);
+    }
+
+    #[test]
+    fn test_together_tts_request_serialization_minimal() {
+        let request = TogetherTextToSpeechRequest {
+            model: "cartesia/sonic".to_string(),
+            input: "Test".to_string(),
+            voice: "newsman".to_string(),
+            response_format: None,
+            sample_rate: None,
+            stream: None,
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "cartesia/sonic");
+        assert_eq!(parsed["input"], "Test");
+        assert_eq!(parsed["voice"], "newsman");
+        assert!(parsed.get("response_format").is_none());
+        assert!(parsed.get("sample_rate").is_none());
+        assert!(parsed.get("stream").is_none());
+    }
+
+    #[test]
+    fn test_get_audio_speech_url() {
+        let base_url = Url::parse("https://api.together.xyz/v1").unwrap();
+        let audio_url = get_audio_speech_url(&base_url).unwrap();
+        assert_eq!(
+            audio_url.as_str(),
+            "https://api.together.xyz/v1/audio/generations"
+        );
+
+        // Test with base URL that has trailing slash
+        let base_url_with_slash = Url::parse("https://api.together.xyz/v1/").unwrap();
+        let audio_url_with_slash = get_audio_speech_url(&base_url_with_slash).unwrap();
+        assert_eq!(
+            audio_url_with_slash.as_str(),
+            "https://api.together.xyz/v1/audio/generations"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_together_tts_provider() {
+        use crate::audio::{AudioOutputFormat, AudioVoice, TextToSpeechRequest};
+        use std::sync::Arc;
+
+        // Set up test environment variable
+        std::env::set_var("TEST_TOGETHER_API_KEY", "test-api-key");
+
+        let provider = TogetherProvider::new(
+            "cartesia/sonic".to_string(),
+            Some(CredentialLocation::Env("TEST_TOGETHER_API_KEY".to_string())),
+            false,
+        )
+        .unwrap();
+
+        let _request = TextToSpeechRequest {
+            id: Uuid::now_v7(),
+            input: "Hello, this is a test".to_string(),
+            model: Arc::from("cartesia/sonic"),
+            voice: AudioVoice::Alloy,
+            response_format: Some(AudioOutputFormat::Mp3),
+            speed: None,
+        };
+
+        // Test request building - we can't easily test the full provider without mocking
+        // but we can test that the provider is set up correctly
+        assert_eq!(provider.model_name(), "cartesia/sonic");
     }
 }
