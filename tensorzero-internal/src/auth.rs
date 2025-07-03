@@ -18,9 +18,8 @@ pub struct ApiKeyMetadata {
 pub type APIConfig = HashMap<String, ApiKeyMetadata>;
 
 // Common error response helper
-fn auth_error_response(status: StatusCode, error_type: &str, message: &str) -> Response {
+fn auth_error_response(status: StatusCode, _error_type: &str, message: &str) -> Response {
     let body = serde_json::json!({
-        "type": error_type,
         "error": message
     });
     (status, axum::Json(body)).into_response()
@@ -131,7 +130,7 @@ pub async fn require_api_key(
             return Err(auth_error_response(
                 StatusCode::NOT_FOUND,
                 "model_not_found",
-                "Model not found in API key",
+                &format!("Model not found: {}", model),
             ))
         }
     };
