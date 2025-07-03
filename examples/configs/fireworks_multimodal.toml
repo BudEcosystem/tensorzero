@@ -33,7 +33,7 @@ model_name = "flux-schnell"
 # Audio transcription models
 [models."whisper-v3-fireworks"]
 routing = ["fireworks"]
-endpoints = ["audio_transcription"]
+endpoints = ["audio_transcription", "audio_translation"]
 
 [models."whisper-v3-fireworks".providers.fireworks]
 type = "fireworks"
@@ -41,7 +41,7 @@ model_name = "whisper-v3"
 
 [models."whisper-v3-turbo-fireworks"]
 routing = ["fireworks"]
-endpoints = ["audio_transcription"]
+endpoints = ["audio_transcription", "audio_translation"]
 
 [models."whisper-v3-turbo-fireworks".providers.fireworks]
 type = "fireworks"

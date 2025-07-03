@@ -741,8 +741,9 @@ Text-to-speech with Cartesia Sonic is priced at $65 per 1 million characters. Fo
 
 The Fireworks provider now supports multiple capabilities beyond chat completions:
 - **Embeddings** - Text embeddings with models like Nomic Embed
-- **Image Generation** - Support for Stable Diffusion XL, FLUX models, and more
+- **Image Generation** - Limited support (Fireworks uses async workflow API, not fully compatible)
 - **Audio Transcription** - Speech-to-text with Whisper v3 models
+- **Audio Translation** - Audio to English text translation with Whisper v3 models
 
 ### Configuration
 
@@ -757,8 +758,13 @@ type = "fireworks"
 model_name = "nomic-ai/nomic-embed-text-v1.5"
 ```
 
-#### Image Generation
+#### Image Generation (Limited Support)
 ```toml
+# NOTE: Fireworks uses an async workflow API for image generation
+# that returns a request_id instead of images directly.
+# This is not currently compatible with TensorZero's synchronous interface.
+# The provider will return an error explaining this limitation.
+
 [models."stable-diffusion-xl"]
 routing = ["fireworks"]
 endpoints = ["image_generation"]
@@ -777,20 +783,20 @@ type = "fireworks"
 model_name = "flux-schnell"
 ```
 
-#### Audio Transcription
+#### Audio Transcription & Translation
 ```toml
 [models."whisper-v3"]
 routing = ["fireworks"]
-endpoints = ["audio_transcription"]
+endpoints = ["audio_transcription", "audio_translation"]
 
 [models."whisper-v3".providers.fireworks]
 type = "fireworks"
 model_name = "whisper-v3"
 
-# Whisper v3 turbo for faster transcription
+# Whisper v3 turbo for faster transcription/translation
 [models."whisper-v3-turbo"]
 routing = ["fireworks"]
-endpoints = ["audio_transcription"]
+endpoints = ["audio_transcription", "audio_translation"]
 
 [models."whisper-v3-turbo".providers.fireworks]
 type = "fireworks"
@@ -833,18 +839,29 @@ curl -X POST http://localhost:3000/v1/audio/transcriptions \
   -F "response_format=json"
 ```
 
+#### Audio Translation
+```bash
+curl -X POST http://localhost:3000/v1/audio/translations \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@audio.mp3" \
+  -F "model=whisper-v3" \
+  -F "response_format=json"
+```
+
 ### Implementation Details
 
 1. **Provider Implementation**: `FireworksProvider` implements:
    - `EmbeddingProvider` trait for embeddings
    - `ImageGenerationProvider` trait for image generation
    - `AudioTranscriptionProvider` trait for audio transcription
+   - `AudioTranslationProvider` trait for audio translation
 
 2. **API Endpoints**: All endpoints use Fireworks' OpenAI-compatible API:
    - Base URL: `https://api.fireworks.ai/inference/v1/`
    - Embeddings: `/embeddings`
    - Images: `/images/generations`
-   - Audio: `/audio/transcriptions`
+   - Audio Transcription: `/audio/transcriptions`
+   - Audio Translation: `/audio/translations`
 
 3. **Authentication**: Uses the same API key configuration as chat completions:
    - Environment variable: `FIREWORKS_API_KEY`
@@ -864,18 +881,18 @@ curl -X POST http://localhost:3000/v1/audio/transcriptions \
 - Response format: URL or base64
 - Models: Stable Diffusion XL, SSD-1B, Playground v2, FLUX models
 
-#### Audio Transcription
+#### Audio Transcription & Translation
 - File upload via multipart form data
 - Response formats: json, text (srt/vtt planned)
 - Language detection and specification
 - Temperature control for transcription
+- Translation to English from any source language
 - Models: Whisper v3, Whisper v3 turbo
 
 ### Limitations
 
 - Audio endpoints may use special regional URLs (currently using default routing)
-- Image generation API may have model-specific parameters not yet exposed
-- No support for audio translation (separate from transcription)
+- Image generation uses Fireworks' async workflow API which returns a request_id instead of images directly. This is not compatible with TensorZero's synchronous image generation interface
 - No support for text-to-speech through Fireworks
 
 ### Testing

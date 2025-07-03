@@ -10,19 +10,19 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::Instant;
 use url::Url;
-use uuid::Uuid;
 
 use crate::{
     audio::{
         AudioTranscriptionProvider, AudioTranscriptionProviderResponse,
         AudioTranscriptionRequest, AudioTranscriptionResponseFormat,
+        AudioTranslationProvider, AudioTranslationProviderResponse, AudioTranslationRequest,
     },
     cache::ModelProviderRequest,
     embeddings::{EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest},
     endpoints::inference::InferenceCredentials,
     error::{DisplayOrDebugGateway, Error, ErrorDetails},
     images::{
-        ImageData, ImageGenerationProvider, ImageGenerationProviderResponse,
+        ImageGenerationProvider, ImageGenerationProviderResponse,
         ImageGenerationRequest,
     },
     inference::types::{
@@ -156,12 +156,19 @@ fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
     join_url(base_url, "embeddings")
 }
 
-fn get_image_generation_url(base_url: &Url) -> Result<Url, Error> {
-    join_url(base_url, "images/generations")
+#[allow(dead_code)]
+fn get_image_generation_url(base_url: &Url, model_name: &str) -> Result<Url, Error> {
+    // Fireworks uses a workflow-based API for image generation
+    let path = format!("workflows/accounts/fireworks/models/{}/text_to_image", model_name);
+    join_url(base_url, &path)
 }
 
 fn get_audio_transcription_url(base_url: &Url) -> Result<Url, Error> {
     join_url(base_url, "audio/transcriptions")
+}
+
+fn get_audio_translation_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "audio/translations")
 }
 
 /// Key differences between Fireworks and OpenAI inference:
@@ -514,154 +521,55 @@ impl EmbeddingProvider for FireworksProvider {
 }
 
 // Image generation support for Fireworks
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 struct FireworksImageGenerationRequest {
     prompt: String,
-    model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    n: Option<u32>,
+    input_image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<String>,
+    seed: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<String>,
+    aspect_ratio: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    user: Option<String>,
+    output_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_upsampling: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    safety_tolerance: Option<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-struct FireworksImageGenerationResponse {
-    created: u64,
-    data: Vec<FireworksImageData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FireworksImageData {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    b64_json: Option<String>,
+struct FireworksImageWorkflowResponse {
+    request_id: String,
 }
 
 impl ImageGenerationProvider for FireworksProvider {
     async fn generate_image(
         &self,
-        request: &ImageGenerationRequest,
-        client: &reqwest::Client,
-        dynamic_api_keys: &InferenceCredentials,
+        _request: &ImageGenerationRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
     ) -> Result<ImageGenerationProviderResponse, Error> {
-        let start_time = Instant::now();
-        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = get_image_generation_url(&FIREWORKS_API_BASE)?;
-
-        // Build Fireworks-specific request
-        let fireworks_request = FireworksImageGenerationRequest {
-            model: self.model_name.clone(),
-            prompt: request.prompt.clone(),
-            n: request.n.map(|n| n as u32),
-            size: request.size.as_ref().map(|s| s.as_str().to_string()),
-            response_format: request
-                .response_format
-                .as_ref()
-                .map(|f| f.as_str().to_string()),
-            user: request.user.clone(),
-        };
-
-        let request_json = serde_json::to_string(&fireworks_request).map_err(|e| {
-            Error::new(ErrorDetails::Serialization {
-                message: format!("Failed to serialize Fireworks image generation request: {e}"),
-            })
-        })?;
-
-        let request_builder = client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .bearer_auth(api_key.expose_secret());
-
-        let res = request_builder
-            .body(request_json.clone())
-            .send()
-            .await
-            .map_err(|e| {
-                Error::new(ErrorDetails::InferenceClient {
-                    status_code: e.status(),
-                    message: format!(
-                        "Error sending request to Fireworks: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                    provider_type: PROVIDER_TYPE.to_string(),
-                    raw_request: Some(request_json.clone()),
-                    raw_response: None,
-                })
-            })?;
-
-        let status = res.status();
-        if status.is_success() {
-            let raw_response = res.text().await.map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing response: {e}"),
-                    raw_request: Some(request_json.clone()),
-                    raw_response: None,
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
-
-            let response: FireworksImageGenerationResponse =
-                serde_json::from_str(&raw_response).map_err(|e| {
-                    Error::new(ErrorDetails::InferenceServer {
-                        message: format!("Error parsing JSON response: {e}"),
-                        raw_request: Some(request_json.clone()),
-                        raw_response: Some(raw_response.clone()),
-                        provider_type: PROVIDER_TYPE.to_string(),
-                    })
-                })?;
-
-            // Convert Fireworks response to TensorZero format
-            let data = response
-                .data
-                .into_iter()
-                .map(|img| ImageData {
-                    url: img.url,
-                    b64_json: img.b64_json,
-                    revised_prompt: None,
-                })
-                .collect();
-
-            let latency = Latency::NonStreaming {
-                response_time: start_time.elapsed(),
-            };
-
-            // Fireworks doesn't provide usage info for image generation
-            let usage = Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-            };
-
-            Ok(ImageGenerationProviderResponse {
-                id: Uuid::now_v7(),
-                data,
-                created: response.created,
-                raw_request: request_json,
-                raw_response,
-                usage,
-                latency,
-            })
-        } else {
-            let raw_response = res.text().await.map_err(|e| {
-                Error::new(ErrorDetails::InferenceServer {
-                    message: format!("Error parsing error response: {e}"),
-                    raw_request: Some(request_json.clone()),
-                    raw_response: None,
-                    provider_type: PROVIDER_TYPE.to_string(),
-                })
-            })?;
-
-            Err(handle_openai_error(
-                &request_json,
-                status,
-                &raw_response,
-                PROVIDER_TYPE,
-            ))
-        }
+        // Fireworks uses an async workflow API for image generation that returns a request_id
+        // This is incompatible with the synchronous image generation interface
+        // For now, we'll return an error indicating this isn't supported
+        
+        // If you need image generation with Fireworks, consider using their workflow API directly
+        // or implementing a polling mechanism to wait for results
+        
+        Err(Error::new(ErrorDetails::InferenceServer {
+            message: format!(
+                "Fireworks image generation uses an async workflow API that returns a request_id. \
+                 This is not currently supported by TensorZero's synchronous image generation interface. \
+                 Model: {}",
+                self.model_name
+            ),
+            provider_type: PROVIDER_TYPE.to_string(),
+            raw_request: None,
+            raw_response: None,
+        }))
     }
 }
 
@@ -799,6 +707,147 @@ impl AudioTranscriptionProvider for FireworksProvider {
                 duration: None,
                 words: None,
                 segments: None,
+                created: current_timestamp(),
+                raw_request: format!("Audio file: {}", request.filename),
+                raw_response,
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing error response: {e}"),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            Err(handle_openai_error(
+                &format!("Audio file: {}", request.filename),
+                status,
+                &raw_response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Audio translation support for Fireworks
+impl AudioTranslationProvider for FireworksProvider {
+    async fn translate(
+        &self,
+        request: &AudioTranslationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<AudioTranslationProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_audio_translation_url(&FIREWORKS_API_BASE)?;
+
+        let start_time = Instant::now();
+
+        // Create multipart form
+        let mut form = Form::new()
+            .text("model", self.model_name.clone())
+            .part(
+                "file",
+                Part::bytes(request.file.clone())
+                    .file_name(request.filename.clone())
+                    .mime_str("audio/mpeg")
+                    .map_err(|e| {
+                        Error::new(ErrorDetails::InferenceClient {
+                            status_code: None,
+                            message: format!("Failed to set MIME type: {e}"),
+                            provider_type: PROVIDER_TYPE.to_string(),
+                            raw_request: None,
+                            raw_response: None,
+                        })
+                    })?,
+            );
+
+        if let Some(prompt) = &request.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(temperature) = request.temperature {
+            form = form.text("temperature", temperature.to_string());
+        }
+
+        let request_builder = client
+            .post(url)
+            .bearer_auth(api_key.expose_secret());
+
+        let res = request_builder.multipart(form).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending audio translation request to Fireworks: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(format!("Audio file: {}", request.filename)),
+                raw_response: None,
+            })
+        })?;
+
+        let status = res.status();
+        if status.is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            // Parse response based on format
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            // For text format, the response is just the text
+            if matches!(
+                request.response_format,
+                Some(AudioTranscriptionResponseFormat::Text)
+            ) {
+                return Ok(AudioTranslationProviderResponse {
+                    id: request.id,
+                    text: raw_response.clone(),
+                    created: current_timestamp(),
+                    raw_request: format!("Audio file: {}", request.filename),
+                    raw_response,
+                    usage: Usage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                    latency,
+                });
+            }
+
+            // For JSON format, parse the response
+            // Reuse the same response structure as transcription
+            let response: FireworksAudioTranscriptionResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!("Error parsing JSON response: {e}"),
+                        raw_request: Some(format!("Audio file: {}", request.filename)),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(AudioTranslationProviderResponse {
+                id: request.id,
+                text: response.text,
                 created: current_timestamp(),
                 raw_request: format!("Audio file: {}", request.filename),
                 raw_response,
@@ -2016,40 +2065,33 @@ mod tests {
     #[test]
     fn test_fireworks_image_generation_request_serialization() {
         let request = FireworksImageGenerationRequest {
-            model: "stable-diffusion-xl".to_string(),
             prompt: "A beautiful sunset".to_string(),
-            n: Some(2),
-            size: Some("1024x1024".to_string()),
-            response_format: Some("url".to_string()),
-            user: Some("test_user".to_string()),
+            input_image: None,
+            seed: Some(42),
+            aspect_ratio: Some("16:9".to_string()),
+            output_format: Some("png".to_string()),
+            prompt_upsampling: Some(true),
+            safety_tolerance: Some(2),
         };
 
         let serialized = serde_json::to_value(&request).unwrap();
-        assert_eq!(serialized["model"], "stable-diffusion-xl");
         assert_eq!(serialized["prompt"], "A beautiful sunset");
-        assert_eq!(serialized["n"], 2);
-        assert_eq!(serialized["size"], "1024x1024");
-        assert_eq!(serialized["response_format"], "url");
-        assert_eq!(serialized["user"], "test_user");
+        assert_eq!(serialized["seed"], 42);
+        assert_eq!(serialized["aspect_ratio"], "16:9");
+        assert_eq!(serialized["output_format"], "png");
+        assert_eq!(serialized["prompt_upsampling"], true);
+        assert_eq!(serialized["safety_tolerance"], 2);
+        assert!(serialized.get("input_image").is_none());
     }
 
     #[test]
-    fn test_fireworks_image_generation_response_deserialization() {
+    fn test_fireworks_image_generation_workflow_response_deserialization() {
         let response_json = r#"{
-            "created": 1700000000,
-            "data": [
-                {"url": "https://example.com/image1.png"},
-                {"b64_json": "base64encodeddata"}
-            ]
+            "request_id": "req_123456789"
         }"#;
 
-        let response: FireworksImageGenerationResponse = serde_json::from_str(response_json).unwrap();
-        assert_eq!(response.created, 1700000000);
-        assert_eq!(response.data.len(), 2);
-        assert_eq!(response.data[0].url, Some("https://example.com/image1.png".to_string()));
-        assert_eq!(response.data[0].b64_json, None);
-        assert_eq!(response.data[1].url, None);
-        assert_eq!(response.data[1].b64_json, Some("base64encodeddata".to_string()));
+        let response: FireworksImageWorkflowResponse = serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.request_id, "req_123456789");
     }
 
     #[test]
@@ -2075,17 +2117,43 @@ mod tests {
     }
 
     #[test]
+    fn test_fireworks_audio_translation_response_deserialization() {
+        // Test JSON format response
+        let response_json = r#"{
+            "text": "This is the translated text",
+            "language": "en"
+        }"#;
+
+        let response: FireworksAudioTranscriptionResponse = serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.text, "This is the translated text");
+        assert_eq!(response.language, Some("en".to_string()));
+
+        // Test response without language
+        let response_json = r#"{
+            "text": "This is the translated text"
+        }"#;
+
+        let response: FireworksAudioTranscriptionResponse = serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.text, "This is the translated text");
+        assert_eq!(response.language, None);
+    }
+
+    #[test]
     fn test_url_helpers() {
         // Test embedding URL
         let url = get_embedding_url(&FIREWORKS_API_BASE).unwrap();
         assert_eq!(url.as_str(), "https://api.fireworks.ai/inference/v1/embeddings");
 
         // Test image generation URL
-        let url = get_image_generation_url(&FIREWORKS_API_BASE).unwrap();
-        assert_eq!(url.as_str(), "https://api.fireworks.ai/inference/v1/images/generations");
+        let url = get_image_generation_url(&FIREWORKS_API_BASE, "stable-diffusion-xl").unwrap();
+        assert_eq!(url.as_str(), "https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models/stable-diffusion-xl/text_to_image");
 
         // Test audio transcription URL
         let url = get_audio_transcription_url(&FIREWORKS_API_BASE).unwrap();
         assert_eq!(url.as_str(), "https://api.fireworks.ai/inference/v1/audio/transcriptions");
+
+        // Test audio translation URL
+        let url = get_audio_translation_url(&FIREWORKS_API_BASE).unwrap();
+        assert_eq!(url.as_str(), "https://api.fireworks.ai/inference/v1/audio/translations");
     }
 }
