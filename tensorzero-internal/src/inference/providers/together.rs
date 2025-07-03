@@ -869,32 +869,32 @@ fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
 
 // Audio TTS types
 #[derive(Debug, Serialize)]
-struct TogetherTextToSpeechRequest {
-    model: String,
-    input: String,
-    voice: String,
+struct TogetherTextToSpeechRequest<'a> {
+    model: Cow<'a, str>,
+    input: Cow<'a, str>,
+    voice: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<String>,
+    response_format: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sample_rate: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
 }
 
-fn map_audio_voice_to_together(voice: &AudioVoice) -> String {
+fn map_audio_voice_to_together(voice: &AudioVoice) -> Cow<'static, str> {
     match voice {
-        AudioVoice::Alloy => "helpful woman".to_string(),
-        AudioVoice::Echo => "laidback woman".to_string(),
-        AudioVoice::Fable => "meditation lady".to_string(),
-        AudioVoice::Onyx => "newsman".to_string(),
-        AudioVoice::Nova => "friendly sidekick".to_string(),
-        AudioVoice::Shimmer => "british reading lady".to_string(),
-        AudioVoice::Ash => "barbershop man".to_string(),
-        AudioVoice::Ballad => "indian lady".to_string(),
-        AudioVoice::Coral => "german conversational woman".to_string(),
-        AudioVoice::Sage => "pilot over intercom".to_string(),
-        AudioVoice::Verse => "australian customer support man".to_string(),
-        AudioVoice::Other(voice_name) => voice_name.clone(),
+        AudioVoice::Alloy => Cow::Borrowed("helpful woman"),
+        AudioVoice::Echo => Cow::Borrowed("laidback woman"),
+        AudioVoice::Fable => Cow::Borrowed("meditation lady"),
+        AudioVoice::Onyx => Cow::Borrowed("newsman"),
+        AudioVoice::Nova => Cow::Borrowed("friendly sidekick"),
+        AudioVoice::Shimmer => Cow::Borrowed("british reading lady"),
+        AudioVoice::Ash => Cow::Borrowed("barbershop man"),
+        AudioVoice::Ballad => Cow::Borrowed("indian lady"),
+        AudioVoice::Coral => Cow::Borrowed("german conversational woman"),
+        AudioVoice::Sage => Cow::Borrowed("pilot over intercom"),
+        AudioVoice::Verse => Cow::Borrowed("australian customer support man"),
+        AudioVoice::Other(voice_name) => Cow::Owned(voice_name.clone()),
     }
 }
 
@@ -1189,10 +1189,15 @@ impl ImageGenerationProvider for TogetherProvider {
                 latency,
             })
         } else {
+            let status = res.status();
+            let error_body = res.text().await.unwrap_or_else(|e| {
+                tracing::error!("Failed to read error response body: {}", e);
+                "Failed to read error response".to_string()
+            });
             Err(handle_openai_error(
                 &request_json,
-                res.status(),
-                &res.text().await.unwrap_or_default(),
+                status,
+                &error_body,
                 PROVIDER_TYPE,
             ))
         }
@@ -1211,10 +1216,29 @@ impl TextToSpeechProvider for TogetherProvider {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
         let url = get_audio_speech_url(&TOGETHER_API_BASE)?;
 
+        // Validate input
+        if request.input.trim().is_empty() {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "Input text cannot be empty".to_string(),
+            }));
+        }
+
+        // Validate input length (Together's limit is typically around 4096 characters)
+        const MAX_INPUT_LENGTH: usize = 4096;
+        if request.input.len() > MAX_INPUT_LENGTH {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Input text is too long: {} characters. Maximum allowed: {} characters",
+                    request.input.len(),
+                    MAX_INPUT_LENGTH
+                ),
+            }));
+        }
+
         // Map output format
         let response_format = match &request.response_format {
-            Some(AudioOutputFormat::Mp3) | None => Some("mp3".to_string()),
-            Some(AudioOutputFormat::Pcm) => Some("raw".to_string()),
+            Some(AudioOutputFormat::Mp3) | None => Some("mp3"),
+            Some(AudioOutputFormat::Pcm) => Some("raw"),
             Some(format) => {
                 return Err(Error::new(ErrorDetails::InvalidRequest {
                     message: format!(
@@ -1226,12 +1250,12 @@ impl TextToSpeechProvider for TogetherProvider {
 
         // Build Together-specific request
         let together_request = TogetherTextToSpeechRequest {
-            model: "cartesia/sonic".to_string(), // Together only supports cartesia/sonic
-            input: request.input.clone(),
+            model: Cow::Borrowed(&self.model_name),
+            input: Cow::Borrowed(&request.input),
             voice: map_audio_voice_to_together(&request.voice),
             response_format,
             sample_rate: Some(44100), // Recommended sample rate
-            stream: Some(false),      // Non-streaming for now
+            stream: Some(false),      // TODO: Add streaming support in the future
         };
 
         let request_json = serde_json::to_string(&together_request).map_err(|e| {
@@ -1292,10 +1316,15 @@ impl TextToSpeechProvider for TogetherProvider {
                 latency,
             })
         } else {
+            let status = res.status();
+            let error_body = res.text().await.unwrap_or_else(|e| {
+                tracing::error!("Failed to read error response body: {}", e);
+                "Failed to read error response".to_string()
+            });
             Err(handle_openai_error(
                 &request_json,
-                res.status(),
-                &res.text().await.unwrap_or_default(),
+                status,
+                &error_body,
                 PROVIDER_TYPE,
             ))
         }
@@ -2331,7 +2360,7 @@ mod tests {
             map_audio_voice_to_together(&AudioVoice::Verse),
             "australian customer support man"
         );
-        
+
         // Test Other variant
         assert_eq!(
             map_audio_voice_to_together(&AudioVoice::Other("custom voice".to_string())),
@@ -2342,10 +2371,10 @@ mod tests {
     #[test]
     fn test_together_tts_request_serialization() {
         let request = TogetherTextToSpeechRequest {
-            model: "cartesia/sonic".to_string(),
-            input: "Hello, world!".to_string(),
-            voice: "helpful woman".to_string(),
-            response_format: Some("mp3".to_string()),
+            model: Cow::Borrowed("cartesia/sonic"),
+            input: Cow::Borrowed("Hello, world!"),
+            voice: Cow::Borrowed("helpful woman"),
+            response_format: Some("mp3"),
             sample_rate: Some(44100),
             stream: Some(false),
         };
@@ -2364,9 +2393,9 @@ mod tests {
     #[test]
     fn test_together_tts_request_serialization_minimal() {
         let request = TogetherTextToSpeechRequest {
-            model: "cartesia/sonic".to_string(),
-            input: "Test".to_string(),
-            voice: "newsman".to_string(),
+            model: Cow::Borrowed("cartesia/sonic"),
+            input: Cow::Borrowed("Test"),
+            voice: Cow::Borrowed("newsman"),
             response_format: None,
             sample_rate: None,
             stream: None,
@@ -2428,5 +2457,67 @@ mod tests {
         // Test request building - we can't easily test the full provider without mocking
         // but we can test that the provider is set up correctly
         assert_eq!(provider.model_name(), "cartesia/sonic");
+    }
+
+    #[tokio::test]
+    async fn test_together_tts_input_validation() {
+        use crate::endpoints::inference::InferenceCredentials;
+        use std::sync::Arc;
+
+        // Set up test environment variable
+        std::env::set_var("TEST_TOGETHER_API_KEY", "test-api-key");
+
+        let provider = TogetherProvider::new(
+            "cartesia/sonic".to_string(),
+            Some(CredentialLocation::Env("TEST_TOGETHER_API_KEY".to_string())),
+            false,
+        )
+        .unwrap();
+
+        let client = reqwest::Client::new();
+        let dynamic_api_keys = InferenceCredentials::default();
+
+        // Test empty input
+        let empty_request = TextToSpeechRequest {
+            id: Uuid::now_v7(),
+            input: "   ".to_string(), // Only whitespace
+            model: Arc::from("cartesia/sonic"),
+            voice: AudioVoice::Alloy,
+            response_format: Some(AudioOutputFormat::Mp3),
+            speed: None,
+        };
+
+        let result = provider
+            .generate_speech(&empty_request, &client, &dynamic_api_keys)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(matches!(
+            error.get_details(),
+            ErrorDetails::InvalidRequest { message } if message.contains("Input text cannot be empty")
+        ));
+
+        // Test input that's too long
+        let long_input = "a".repeat(5000); // Exceeds 4096 character limit
+        let long_request = TextToSpeechRequest {
+            id: Uuid::now_v7(),
+            input: long_input,
+            model: Arc::from("cartesia/sonic"),
+            voice: AudioVoice::Alloy,
+            response_format: Some(AudioOutputFormat::Mp3),
+            speed: None,
+        };
+
+        let result = provider
+            .generate_speech(&long_request, &client, &dynamic_api_keys)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(matches!(
+            error.get_details(),
+            ErrorDetails::InvalidRequest { message } if message.contains("Input text is too long")
+        ));
     }
 }

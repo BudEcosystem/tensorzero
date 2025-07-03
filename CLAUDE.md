@@ -552,7 +552,7 @@ You can use **any of Together AI's voices directly** by specifying the exact voi
 
 **Popular Together Voices:**
 - `german conversational woman`
-- `french narrator lady` 
+- `french narrator lady`
 - `japanese woman conversational`
 - `british narration lady`
 - `spanish narrator man`
