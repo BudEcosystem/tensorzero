@@ -2727,10 +2727,9 @@ pub async fn image_generation_handler(
     {
         Ok(Some(model)) => model,
         Ok(None) => {
-            // Model doesn't exist - return 404 using RouteNotFound
-            return Err(Error::new(ErrorDetails::RouteNotFound {
-                path: "/v1/images/generations".to_string(),
-                method: "POST".to_string(),
+            // Model doesn't exist - return 404 with ModelNotFound error
+            return Err(Error::new(ErrorDetails::ModelNotFound {
+                name: model_name.to_string(),
             }));
         }
         Err(e) => {

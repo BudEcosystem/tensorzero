@@ -487,6 +487,14 @@ cargo test --package tensorzero-internal test_together_image
 cargo test --package tensorzero-internal test_openai_compatible_image_generation
 ```
 
+## xAI Provider Image Generation
+
+### Overview
+
+The xAI provider now supports image generation through OpenAI-compatible endpoints, enabling access to xAI's `grok-2-image` model:
+- **grok-2-image** - xAI's high-quality image generation model
+- **Pricing**: $0.07 per image
+- **Rate Limits**: 5 requests/second, up to 10 images per request
 ## Together Provider Text-to-Speech
 
 ### Overview
@@ -499,6 +507,15 @@ The Together provider now supports text-to-speech (TTS) through OpenAI-compatibl
 ### Configuration
 
 ```toml
+# Image generation model configuration
+[models."grok-2-image"]
+routing = ["xai"]
+endpoints = ["image_generation"]
+
+[models."grok-2-image".providers.xai]
+type = "xai"
+model_name = "grok-2-image"
+api_key_location = { env = "XAI_API_KEY" }
 # Text-to-speech model configuration
 [models."together-tts"]
 routing = ["together"]
@@ -511,6 +528,53 @@ model_name = "cartesia/sonic"
 
 ### API Usage
 
+xAI's image generation follows the OpenAI-compatible format:
+
+```bash
+# Generate an image
+curl -X POST http://localhost:3000/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-2-image",
+    "prompt": "A futuristic city at sunset",
+    "n": 1,
+    "response_format": "url"
+  }'
+```
+
+### Implementation Details
+
+1. **Provider Implementation**: `XAIProvider` implements the `ImageGenerationProvider` trait
+2. **Endpoint**: Uses xAI's OpenAI-compatible endpoint: `https://api.x.ai/v1/images/generations`
+3. **Authentication**: Uses the same API key configuration as chat completions
+4. **Response Format**: Returns standard OpenAI image response format with URLs or base64 data
+
+### Supported Parameters
+
+xAI supports a subset of OpenAI's image generation parameters:
+- `model`: Always "grok-2-image"
+- `prompt`: Required string describing the image to generate
+- `n`: Number of images to generate (1-10, default: 1)
+- `response_format`: "url" or "b64_json" (default: "url")
+- `user`: Optional string for abuse monitoring
+
+### Limitations
+
+Unlike OpenAI's DALL-E models, xAI currently doesn't support:
+- `quality`: Not supported by xAI API
+- `size`: Not supported by xAI API  
+- `style`: Not supported by xAI API
+
+These parameters are ignored gracefully if provided.
+
+### Error Handling
+
+The xAI provider includes comprehensive error handling for:
+- Rate limiting (5 requests/second)
+- Invalid prompts or content policy violations
+- Network timeouts and connection issues
+- Authentication failures
 Together's TTS follows the OpenAI-compatible format:
 
 ```bash
@@ -645,6 +709,20 @@ Common error scenarios:
 ### Testing
 
 ```bash
+# Run unit tests for xAI image generation
+cargo test --package tensorzero-internal test_xai_image
+
+# Run all xAI provider tests
+cargo test --package tensorzero-internal --lib xai
+```
+
+### Future Enhancements
+
+Potential improvements that could be added when xAI expands their API:
+- Image size control
+- Quality settings
+- Style parameters
+- Batch processing optimizations
 # Run unit tests for voice mapping and serialization
 cargo test --package tensorzero-internal test_map_audio_voice_to_together
 cargo test --package tensorzero-internal test_together_tts_request_serialization

@@ -679,6 +679,14 @@ endpoints = ["image_generation"]
 type = "dummy"
 model_name = "image-generation-test"
 
+# xAI image generation model for testing
+[models."grok-2-image"]
+routing = ["xai"]
+endpoints = ["image_generation"]
+
+[models."grok-2-image".providers.xai]
+type = "xai"
+model_name = "grok-2-image"
 # Together TTS models for testing
 [models."together-tts"]
 routing = ["together"]
