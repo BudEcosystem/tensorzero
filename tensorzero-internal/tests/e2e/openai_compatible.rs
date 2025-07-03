@@ -1208,8 +1208,7 @@ async fn test_openai_compatible_embeddings_route_invalid_model() {
     assert!(
         error_message.contains("not found or does not support embeddings")
             || error_message.contains("is not configured to support capability"),
-        "Unexpected error message: {}",
-        error_message
+        "Unexpected error message: {error_message}"
     );
 }
 
