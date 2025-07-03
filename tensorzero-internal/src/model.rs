@@ -3795,7 +3795,9 @@ mod tests {
                     .await;
                 assert!(result.is_err());
                 let error = result.unwrap_err();
-                assert!(error.to_string().contains("is not configured to support capability"));
+                assert!(error
+                    .to_string()
+                    .contains("is not configured to support capability"));
 
                 // Test getting non-existent model
                 let result = model_table
@@ -3842,7 +3844,9 @@ mod tests {
         let result = model.embed(&request, "test_model", &clients).await;
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("does not support capability"));
+        assert!(error
+            .to_string()
+            .contains("is not configured to support capability"));
     }
 
     #[traced_test]

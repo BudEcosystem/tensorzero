@@ -805,20 +805,20 @@ struct MistralEmbeddingRequest<'a> {
 
 #[derive(Debug, Deserialize)]
 struct MistralEmbeddingResponse {
-    #[allow(dead_code)]
-    id: String,
-    #[allow(dead_code)]
-    object: String,
+    #[serde(rename = "id")]
+    _id: String,
+    #[serde(rename = "object")]
+    _object: String,
     data: Vec<MistralEmbeddingData>,
-    #[allow(dead_code)]
-    model: String,
+    #[serde(rename = "model")]
+    _model: String,
     usage: MistralEmbeddingUsage,
 }
 
 #[derive(Debug, Deserialize)]
 struct MistralEmbeddingData {
-    #[allow(dead_code)]
-    object: String,
+    #[serde(rename = "object")]
+    _object: String,
     embedding: Vec<f32>,
     index: usize,
 }
@@ -826,8 +826,8 @@ struct MistralEmbeddingData {
 #[derive(Debug, Deserialize)]
 struct MistralEmbeddingUsage {
     prompt_tokens: u32,
-    #[allow(dead_code)]
-    total_tokens: u32,
+    #[serde(rename = "total_tokens")]
+    _total_tokens: u32,
 }
 
 impl From<MistralEmbeddingUsage> for Usage {
@@ -1013,18 +1013,18 @@ struct MistralCategories {
     #[serde(rename = "hate_and_discrimination")]
     hate_and_discrimination: bool,
     violence_and_threats: bool,
-    #[allow(dead_code)]
-    dangerous_and_criminal_content: bool,
+    #[serde(rename = "dangerous_and_criminal_content")]
+    _dangerous_and_criminal_content: bool,
     #[serde(rename = "selfharm")]
     self_harm: bool,
-    #[allow(dead_code)]
-    health: bool,
-    #[allow(dead_code)]
-    financial: bool,
-    #[allow(dead_code)]
-    law: bool,
-    #[allow(dead_code)]
-    pii: bool,
+    #[serde(rename = "health")]
+    _health: bool,
+    #[serde(rename = "financial")]
+    _financial: bool,
+    #[serde(rename = "law")]
+    _law: bool,
+    #[serde(rename = "pii")]
+    _pii: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1033,18 +1033,18 @@ struct MistralCategoryScores {
     #[serde(rename = "hate_and_discrimination")]
     hate_and_discrimination: f32,
     violence_and_threats: f32,
-    #[allow(dead_code)]
-    dangerous_and_criminal_content: f32,
+    #[serde(rename = "dangerous_and_criminal_content")]
+    _dangerous_and_criminal_content: f32,
     #[serde(rename = "selfharm")]
     self_harm: f32,
-    #[allow(dead_code)]
-    health: f32,
-    #[allow(dead_code)]
-    financial: f32,
-    #[allow(dead_code)]
-    law: f32,
-    #[allow(dead_code)]
-    pii: f32,
+    #[serde(rename = "health")]
+    _health: f32,
+    #[serde(rename = "financial")]
+    _financial: f32,
+    #[serde(rename = "law")]
+    _law: f32,
+    #[serde(rename = "pii")]
+    _pii: f32,
 }
 
 // Helper function to get classification URL
@@ -1707,7 +1707,7 @@ mod tests {
     fn test_mistral_embedding_usage_conversion() {
         let usage = MistralEmbeddingUsage {
             prompt_tokens: 100,
-            total_tokens: 100,
+            _total_tokens: 100,
         };
 
         let converted: Usage = usage.into();
@@ -1755,16 +1755,16 @@ mod tests {
         }"#;
 
         let response: MistralEmbeddingResponse = serde_json::from_str(json_response).unwrap();
-        assert_eq!(response.id, "embd-aad2b3a4a65e48ccb50e9e4cc1679a2a");
-        assert_eq!(response.object, "list");
-        assert_eq!(response.model, "mistral-embed");
+        assert_eq!(response._id, "embd-aad2b3a4a65e48ccb50e9e4cc1679a2a");
+        assert_eq!(response._object, "list");
+        assert_eq!(response._model, "mistral-embed");
         assert_eq!(response.data.len(), 2);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
         assert_eq!(response.data[0].index, 0);
         assert_eq!(response.data[1].embedding, vec![0.4, 0.5, 0.6]);
         assert_eq!(response.data[1].index, 1);
         assert_eq!(response.usage.prompt_tokens, 10);
-        assert_eq!(response.usage.total_tokens, 10);
+        assert_eq!(response.usage._total_tokens, 10);
     }
 
     #[test]

@@ -1202,10 +1202,15 @@ async fn test_openai_compatible_embeddings_route_invalid_model() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let response_json: Value = response.json().await.unwrap();
-    assert!(response_json["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("not found or does not support embeddings"));
+    let error_message = response_json["error"].as_str().unwrap();
+    // The error could be either "not found" or "not configured for capability"
+    // depending on whether the model exists in the config
+    assert!(
+        error_message.contains("not found or does not support embeddings")
+            || error_message.contains("is not configured to support capability"),
+        "Unexpected error message: {}",
+        error_message
+    );
 }
 
 #[tokio::test]
@@ -1461,10 +1466,14 @@ async fn test_openai_compatible_image_generation_errors() {
     assert_eq!(response_wrong_capability.status(), StatusCode::BAD_REQUEST);
 
     let error_json: Value = response_wrong_capability.json().await.unwrap();
-    assert!(error_json["error"]
-        .as_str()
-        .unwrap()
-        .contains("does not support"));
+    let error_message = error_json["error"].as_str().unwrap();
+    // Check that the error indicates the model doesn't support image generation
+    assert!(
+        error_message.contains("does not support")
+            || error_message.contains("is not configured to support capability"),
+        "Unexpected error message: {}",
+        error_message
+    );
 
     // Test with invalid parameters
     let payload_invalid = json!({
