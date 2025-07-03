@@ -37,7 +37,13 @@ use crate::inference::providers::dummy::DummyProvider;
 pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
 
 impl ShorthandModelConfig for EmbeddingModelConfig {
-    const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "vllm::", "together::", "mistral::",  "fireworks::"];
+    const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
+        "openai::",
+        "vllm::",
+        "together::",
+        "mistral::",
+        "fireworks::",
+    ];
     const MODEL_TYPE: &str = "Embedding model";
     async fn from_shorthand(provider_type: &str, model_name: &str) -> Result<Self, Error> {
         let model_name = model_name.to_string();
@@ -430,6 +436,8 @@ impl EmbeddingProvider for EmbeddingProviderConfig {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             EmbeddingProviderConfig::Fireworks(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
             EmbeddingProviderConfig::Mistral(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }

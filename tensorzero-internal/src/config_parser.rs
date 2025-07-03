@@ -420,8 +420,9 @@ impl<'c> Config<'c> {
                                         crate::embeddings::EmbeddingProviderConfig::Together(p) => {
                                             ProviderConfig::Together(p)
                                         }
-                                        crate::embeddings::EmbeddingProviderConfig::Fireworks(p) => {
-                                            ProviderConfig::Fireworks(p)
+                                        crate::embeddings::EmbeddingProviderConfig::Fireworks(
+                                            p,
+                                        ) => ProviderConfig::Fireworks(p),
                                         crate::embeddings::EmbeddingProviderConfig::Mistral(p) => {
                                             ProviderConfig::Mistral(p)
                                         }

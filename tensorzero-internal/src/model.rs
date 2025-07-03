@@ -1959,6 +1959,8 @@ impl ModelProvider {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             ProviderConfig::Fireworks(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
             ProviderConfig::Mistral(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
