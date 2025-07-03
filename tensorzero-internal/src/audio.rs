@@ -141,6 +141,8 @@ pub enum AudioVoice {
     Sage,
     Shimmer,
     Verse,
+    #[serde(untagged)]
+    Other(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

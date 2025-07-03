@@ -313,6 +313,9 @@ pub enum ErrorDetails {
     OutputValidation {
         source: Box<Error>,
     },
+    ModelNotFound {
+        name: String,
+    },
     ProviderNotFound {
         provider_name: String,
     },
@@ -470,6 +473,7 @@ impl ErrorDetails {
             ErrorDetails::Observability { .. } => tracing::Level::ERROR,
             ErrorDetails::OutputParsing { .. } => tracing::Level::WARN,
             ErrorDetails::OutputValidation { .. } => tracing::Level::WARN,
+            ErrorDetails::ModelNotFound { .. } => tracing::Level::WARN,
             ErrorDetails::ProviderNotFound { .. } => tracing::Level::ERROR,
             ErrorDetails::Serialization { .. } => tracing::Level::ERROR,
             ErrorDetails::StreamError { .. } => tracing::Level::ERROR,
@@ -566,6 +570,7 @@ impl ErrorDetails {
             ErrorDetails::Observability { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::OutputParsing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::OutputValidation { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorDetails::ModelNotFound { .. } => StatusCode::NOT_FOUND,
             ErrorDetails::ProviderNotFound { .. } => StatusCode::NOT_FOUND,
             ErrorDetails::Serialization { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::StreamError { .. } => StatusCode::INTERNAL_SERVER_ERROR,
@@ -931,6 +936,9 @@ impl std::fmt::Display for ErrorDetails {
             }
             ErrorDetails::OutputValidation { source } => {
                 write!(f, "Output validation failed with messages: {source}")
+            }
+            ErrorDetails::ModelNotFound { name } => {
+                write!(f, "Model not found: {name}")
             }
             ErrorDetails::ProviderNotFound { provider_name } => {
                 write!(f, "Provider not found: {provider_name}")

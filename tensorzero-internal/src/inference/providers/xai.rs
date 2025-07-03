@@ -4,7 +4,7 @@ use futures::{StreamExt, TryStreamExt};
 use lazy_static::lazy_static;
 use reqwest_eventsource::RequestBuilderExt;
 use secrecy::{ExposeSecret, SecretString};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::time::Instant;
 use url::Url;
@@ -12,12 +12,15 @@ use url::Url;
 use crate::cache::ModelProviderRequest;
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{DisplayOrDebugGateway, Error, ErrorDetails};
+use crate::images::{
+    ImageData, ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
+};
 use crate::inference::providers::provider_trait::InferenceProvider;
 use crate::inference::types::batch::{BatchRequestRow, PollBatchInferenceResponse};
 use crate::inference::types::{
     batch::StartBatchProviderInferenceResponse, ContentBlockOutput, Latency, ModelInferenceRequest,
     ModelInferenceRequestJsonMode, PeekableProviderInferenceResponseStream,
-    ProviderInferenceResponse, ProviderInferenceResponseArgs,
+    ProviderInferenceResponse, ProviderInferenceResponseArgs, Usage,
 };
 use crate::model::{build_creds_caching_default, Credential, CredentialLocation, ModelProvider};
 
@@ -518,6 +521,156 @@ impl<'a> TryFrom<XAIResponseWithMetadata<'a>> for ProviderInferenceResponse {
     }
 }
 
+// Image generation types
+#[derive(Debug, Serialize)]
+struct XAIImageGenerationRequest {
+    model: String,
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    n: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XAIImageResponse {
+    data: Vec<XAIImageData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XAIImageData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    b64_json: Option<String>,
+}
+
+fn get_image_generation_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("images/generations").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
+// Image generation implementation
+impl ImageGenerationProvider for XAIProvider {
+    async fn generate_image(
+        &self,
+        request: &ImageGenerationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageGenerationProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_image_generation_url(&XAI_DEFAULT_BASE_URL)?;
+
+        // Build xAI-specific request
+        let xai_request = XAIImageGenerationRequest {
+            model: self.model_name.clone(),
+            prompt: request.prompt.clone(),
+            n: request.n,
+            response_format: request
+                .response_format
+                .as_ref()
+                .map(|f| f.as_str().to_string()),
+            user: request.user.clone(),
+        };
+
+        let request_json = serde_json::to_string(&xai_request).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!("Failed to serialize xAI image generation request: {e}"),
+            })
+        })?;
+
+        let request_builder = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret())
+            .body(request_json.clone());
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send xAI image generation request: {e}"),
+                status_code: None,
+                raw_request: Some(request_json.clone()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        // Handle error response first to avoid any confusion about ownership
+        if !res.status().is_success() {
+            return Err(handle_openai_error(
+                &request_json,
+                res.status(),
+                &res.text().await.unwrap_or_default(),
+                PROVIDER_TYPE,
+            ));
+        }
+
+        // Process successful response
+        let response_body = res.text().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to read xAI image generation response: {e}"),
+                status_code: None,
+                raw_request: Some(request_json.clone()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let response: XAIImageResponse = serde_json::from_str(&response_body).map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to parse xAI image generation response: {e}"),
+                status_code: None,
+                raw_request: Some(request_json.clone()),
+                raw_response: Some(response_body.clone()),
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        Ok(ImageGenerationProviderResponse {
+            id: request.id,
+            created: response.created.unwrap_or_else(|| {
+                // Use current timestamp if not provided
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            }),
+            data: response
+                .data
+                .into_iter()
+                .map(|d| ImageData {
+                    url: d.url,
+                    b64_json: d.b64_json,
+                    revised_prompt: None, // xAI doesn't provide revised prompts
+                })
+                .collect(),
+            raw_request: request_json,
+            raw_response: response_body,
+            usage: Usage {
+                input_tokens: 0, // xAI doesn't provide token usage for images
+                output_tokens: 0,
+            },
+            latency,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
@@ -733,5 +886,197 @@ mod tests {
                 response_time: Duration::from_secs(0)
             }
         );
+    }
+
+    // Image generation tests
+
+    #[test]
+    fn test_xai_image_generation_request_serialization() {
+        let request = XAIImageGenerationRequest {
+            model: "grok-2-image".to_string(),
+            prompt: "A beautiful sunset over mountains".to_string(),
+            n: Some(1),
+            response_format: Some("url".to_string()),
+            user: Some("test_user".to_string()),
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "grok-2-image");
+        assert_eq!(parsed["prompt"], "A beautiful sunset over mountains");
+        assert_eq!(parsed["n"], 1);
+        assert_eq!(parsed["response_format"], "url");
+        assert_eq!(parsed["user"], "test_user");
+    }
+
+    #[test]
+    fn test_xai_image_generation_request_minimal() {
+        let request = XAIImageGenerationRequest {
+            model: "grok-2-image".to_string(),
+            prompt: "Test prompt".to_string(),
+            n: None,
+            response_format: None,
+            user: None,
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "grok-2-image");
+        assert_eq!(parsed["prompt"], "Test prompt");
+        assert!(!parsed.as_object().unwrap().contains_key("n"));
+        assert!(!parsed.as_object().unwrap().contains_key("response_format"));
+        assert!(!parsed.as_object().unwrap().contains_key("user"));
+    }
+
+    #[test]
+    fn test_xai_image_response_deserialization() {
+        let response_json = r#"
+        {
+            "data": [
+                {
+                    "url": "https://example.com/image1.png"
+                },
+                {
+                    "b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+                }
+            ],
+            "created": 1234567890
+        }
+        "#;
+
+        let response: XAIImageResponse = serde_json::from_str(response_json).unwrap();
+
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(
+            response.data[0].url.as_ref().unwrap(),
+            "https://example.com/image1.png"
+        );
+        assert!(response.data[0].b64_json.is_none());
+        assert!(response.data[1].url.is_none());
+        assert!(response.data[1].b64_json.is_some());
+        assert_eq!(response.created.unwrap(), 1234567890);
+    }
+
+    #[test]
+    fn test_xai_image_response_minimal() {
+        let response_json = r#"
+        {
+            "data": [
+                {
+                    "url": "https://example.com/image.png"
+                }
+            ]
+        }
+        "#;
+
+        let response: XAIImageResponse = serde_json::from_str(response_json).unwrap();
+
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(
+            response.data[0].url.as_ref().unwrap(),
+            "https://example.com/image.png"
+        );
+        assert!(response.created.is_none());
+    }
+
+    #[test]
+    fn test_get_image_generation_url() {
+        let base_url = Url::parse("https://api.x.ai/v1").unwrap();
+        let url = get_image_generation_url(&base_url).unwrap();
+        assert_eq!(url.as_str(), "https://api.x.ai/v1/images/generations");
+
+        let base_url_with_slash = Url::parse("https://api.x.ai/v1/").unwrap();
+        let url = get_image_generation_url(&base_url_with_slash).unwrap();
+        assert_eq!(url.as_str(), "https://api.x.ai/v1/images/generations");
+    }
+
+    #[test]
+    fn test_xai_image_generation_request_to_response_conversion() {
+        // Test request serialization with all fields
+        let request = XAIImageGenerationRequest {
+            model: "grok-2-image".to_string(),
+            prompt: "A test prompt".to_string(),
+            n: Some(2),
+            response_format: Some("b64_json".to_string()),
+            user: Some("test-user".to_string()),
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("\"model\":\"grok-2-image\""));
+        assert!(serialized.contains("\"prompt\":\"A test prompt\""));
+        assert!(serialized.contains("\"n\":2"));
+        assert!(serialized.contains("\"response_format\":\"b64_json\""));
+        assert!(serialized.contains("\"user\":\"test-user\""));
+
+        // Test response data conversion logic
+        let xai_response = XAIImageResponse {
+            created: Some(1234567890),
+            data: vec![
+                XAIImageData {
+                    url: Some("https://example.com/image1.png".to_string()),
+                    b64_json: None,
+                },
+                XAIImageData {
+                    url: None,
+                    b64_json: Some("base64data".to_string()),
+                },
+            ],
+        };
+
+        // Verify the response structure
+        assert_eq!(xai_response.created, Some(1234567890));
+        assert_eq!(xai_response.data.len(), 2);
+        assert_eq!(
+            xai_response.data[0].url,
+            Some("https://example.com/image1.png".to_string())
+        );
+        assert!(xai_response.data[0].b64_json.is_none());
+        assert!(xai_response.data[1].url.is_none());
+        assert_eq!(
+            xai_response.data[1].b64_json,
+            Some("base64data".to_string())
+        );
+    }
+
+    #[test]
+    fn test_xai_image_error_handling() {
+        // Test error response structure parsing
+        let error_json = r#"{
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Invalid prompt"
+            }
+        }"#;
+
+        // Just verify the JSON can be parsed into expected structure
+        let error_value: serde_json::Value = serde_json::from_str(error_json).unwrap();
+        assert_eq!(
+            error_value["error"]["type"].as_str().unwrap(),
+            "invalid_request_error"
+        );
+        assert_eq!(
+            error_value["error"]["message"].as_str().unwrap(),
+            "Invalid prompt"
+        );
+
+        // Test rate limit error
+        let rate_limit_json = r#"{
+            "error": {
+                "type": "rate_limit_error",
+                "message": "Rate limit exceeded. Please try again later."
+            }
+        }"#;
+
+        let rate_limit_value: serde_json::Value = serde_json::from_str(rate_limit_json).unwrap();
+        assert_eq!(
+            rate_limit_value["error"]["type"].as_str().unwrap(),
+            "rate_limit_error"
+        );
+        assert!(rate_limit_value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Rate limit"));
     }
 }

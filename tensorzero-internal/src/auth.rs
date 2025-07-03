@@ -18,9 +18,8 @@ pub struct ApiKeyMetadata {
 pub type APIConfig = HashMap<String, ApiKeyMetadata>;
 
 // Common error response helper
-fn auth_error_response(status: StatusCode, error_type: &str, message: &str) -> Response {
+fn auth_error_response(status: StatusCode, message: &str) -> Response {
     let body = serde_json::json!({
-        "type": error_type,
         "error": message
     });
     (status, axum::Json(body)).into_response()
@@ -84,7 +83,6 @@ pub async fn require_api_key(
         None => {
             return Err(auth_error_response(
                 StatusCode::UNAUTHORIZED,
-                "missing_authorization",
                 "Missing authorization header",
             ))
         }
@@ -94,7 +92,6 @@ pub async fn require_api_key(
     if api_config.is_err() {
         return Err(auth_error_response(
             StatusCode::UNAUTHORIZED,
-            "invalid_api_key",
             "Invalid API key",
         ));
     }
@@ -105,7 +102,6 @@ pub async fn require_api_key(
         Err(_) => {
             return Err(auth_error_response(
                 StatusCode::BAD_REQUEST,
-                "invalid_request_body",
                 "Invalid request body",
             ))
         }
@@ -116,7 +112,6 @@ pub async fn require_api_key(
         None => {
             return Err(auth_error_response(
                 StatusCode::BAD_REQUEST,
-                "invalid_request_body",
                 "Missing model name in request body",
             ))
         }
@@ -130,8 +125,7 @@ pub async fn require_api_key(
         None => {
             return Err(auth_error_response(
                 StatusCode::NOT_FOUND,
-                "model_not_found",
-                "Model not found in API key",
+                &format!("Model not found: {model}"),
             ))
         }
     };
