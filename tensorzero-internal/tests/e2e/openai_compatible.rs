@@ -1483,3 +1483,115 @@ async fn test_openai_compatible_image_generation_errors() {
 
     assert_eq!(response_invalid.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn test_openai_compatible_image_generation_xai() {
+    let client = Client::new();
+
+    // Test basic xAI image generation
+    let payload = json!({
+        "model": "grok-2-image",
+        "prompt": "A futuristic city at sunset with flying cars",
+        "n": 1,
+        "response_format": "url"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response_json: Value = response.json().await.unwrap();
+
+    // Verify response structure
+    assert!(response_json["created"].is_u64());
+    assert!(response_json["data"].is_array());
+    assert_eq!(response_json["data"].as_array().unwrap().len(), 1);
+
+    let image_data = &response_json["data"][0];
+    assert!(image_data["url"].is_string());
+
+    // Test with base64 response format
+    let payload_b64 = json!({
+        "model": "grok-2-image",
+        "prompt": "A serene mountain landscape",
+        "n": 1,
+        "response_format": "b64_json"
+    });
+
+    let response_b64 = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload_b64)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_b64.status(), StatusCode::OK);
+
+    let response_b64_json: Value = response_b64.json().await.unwrap();
+    assert!(response_b64_json["data"][0]["b64_json"].is_string());
+
+    // Test with multiple images (up to xAI's limit)
+    let payload_multiple = json!({
+        "model": "grok-2-image",
+        "prompt": "Different perspectives of a modern architecture",
+        "n": 3,
+        "response_format": "url"
+    });
+
+    let response_multiple = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload_multiple)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_multiple.status(), StatusCode::OK);
+
+    let response_multiple_json: Value = response_multiple.json().await.unwrap();
+    assert_eq!(response_multiple_json["data"].as_array().unwrap().len(), 3);
+
+    // Test with optional user parameter
+    let payload_with_user = json!({
+        "model": "grok-2-image",
+        "prompt": "A peaceful garden scene",
+        "n": 1,
+        "response_format": "url",
+        "user": "test-user-123"
+    });
+
+    let response_with_user = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload_with_user)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_with_user.status(), StatusCode::OK);
+
+    // Test that unsupported parameters are gracefully ignored
+    let payload_with_unsupported = json!({
+        "model": "grok-2-image",
+        "prompt": "A vibrant coral reef",
+        "n": 1,
+        "response_format": "url",
+        "size": "1024x1024",  // Not supported by xAI
+        "quality": "hd",      // Not supported by xAI
+        "style": "vivid"      // Not supported by xAI
+    });
+
+    let response_unsupported = client
+        .post(get_gateway_endpoint("/v1/images/generations"))
+        .json(&payload_with_unsupported)
+        .send()
+        .await
+        .unwrap();
+
+    // Should still succeed, ignoring unsupported parameters
+    assert_eq!(response_unsupported.status(), StatusCode::OK);
+}
