@@ -734,3 +734,168 @@ cargo test --test e2e --features e2e_tests test_openai_compatible_audio_speech_w
 ### Pricing
 
 Text-to-speech with Cartesia Sonic is priced at $65 per 1 million characters. For current pricing details, refer to [Together AI's pricing page](https://www.together.ai/pricing).
+
+## Fireworks Provider Multimodal Support
+
+### Overview
+
+The Fireworks provider now supports multiple capabilities beyond chat completions:
+- **Embeddings** - Text embeddings with models like Nomic Embed
+- **Image Generation** - Support for Stable Diffusion XL, FLUX models, and more
+- **Audio Transcription** - Speech-to-text with Whisper v3 models
+
+### Configuration
+
+#### Embeddings
+```toml
+[models."nomic-embed"]
+routing = ["fireworks"]
+endpoints = ["embedding"]
+
+[models."nomic-embed".providers.fireworks]
+type = "fireworks"
+model_name = "nomic-ai/nomic-embed-text-v1.5"
+```
+
+#### Image Generation
+```toml
+[models."stable-diffusion-xl"]
+routing = ["fireworks"]
+endpoints = ["image_generation"]
+
+[models."stable-diffusion-xl".providers.fireworks]
+type = "fireworks"
+model_name = "stable-diffusion-xl"
+
+# FLUX models
+[models."flux-schnell"]
+routing = ["fireworks"]
+endpoints = ["image_generation"]
+
+[models."flux-schnell".providers.fireworks]
+type = "fireworks"
+model_name = "flux-schnell"
+```
+
+#### Audio Transcription
+```toml
+[models."whisper-v3"]
+routing = ["fireworks"]
+endpoints = ["audio_transcription"]
+
+[models."whisper-v3".providers.fireworks]
+type = "fireworks"
+model_name = "whisper-v3"
+
+# Whisper v3 turbo for faster transcription
+[models."whisper-v3-turbo"]
+routing = ["fireworks"]
+endpoints = ["audio_transcription"]
+
+[models."whisper-v3-turbo".providers.fireworks]
+type = "fireworks"
+model_name = "whisper-v3-turbo"
+```
+
+### API Usage
+
+#### Embeddings
+```bash
+curl -X POST http://localhost:3000/v1/embeddings \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "nomic-embed",
+    "input": "Your text to embed"
+  }'
+```
+
+#### Image Generation
+```bash
+curl -X POST http://localhost:3000/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "stable-diffusion-xl",
+    "prompt": "A beautiful sunset over mountains",
+    "n": 1,
+    "size": "1024x1024",
+    "response_format": "url"
+  }'
+```
+
+#### Audio Transcription
+```bash
+curl -X POST http://localhost:3000/v1/audio/transcriptions \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@audio.mp3" \
+  -F "model=whisper-v3" \
+  -F "response_format=json"
+```
+
+### Implementation Details
+
+1. **Provider Implementation**: `FireworksProvider` implements:
+   - `EmbeddingProvider` trait for embeddings
+   - `ImageGenerationProvider` trait for image generation
+   - `AudioTranscriptionProvider` trait for audio transcription
+
+2. **API Endpoints**: All endpoints use Fireworks' OpenAI-compatible API:
+   - Base URL: `https://api.fireworks.ai/inference/v1/`
+   - Embeddings: `/embeddings`
+   - Images: `/images/generations`
+   - Audio: `/audio/transcriptions`
+
+3. **Authentication**: Uses the same API key configuration as chat completions:
+   - Environment variable: `FIREWORKS_API_KEY`
+   - Or configured via `api_key_location` in the model config
+
+### Supported Features
+
+#### Embeddings
+- Single and batch text embedding
+- Optional encoding format (base64)
+- Dimension parameter support (model-dependent)
+- Models: Nomic Embed v1.5 and others
+
+#### Image Generation
+- Multiple image generation (n parameter)
+- Size control
+- Response format: URL or base64
+- Models: Stable Diffusion XL, SSD-1B, Playground v2, FLUX models
+
+#### Audio Transcription
+- File upload via multipart form data
+- Response formats: json, text (srt/vtt planned)
+- Language detection and specification
+- Temperature control for transcription
+- Models: Whisper v3, Whisper v3 turbo
+
+### Limitations
+
+- Audio endpoints may use special regional URLs (currently using default routing)
+- Image generation API may have model-specific parameters not yet exposed
+- No support for audio translation (separate from transcription)
+- No support for text-to-speech through Fireworks
+
+### Testing
+
+```bash
+# Run unit tests
+cargo test --package tensorzero-internal --lib fireworks::tests
+
+# Test specific functionality
+cargo test --package tensorzero-internal test_fireworks_embedding
+cargo test --package tensorzero-internal test_fireworks_image
+cargo test --package tensorzero-internal test_fireworks_audio
+```
+
+### Error Handling
+
+All implementations include proper error handling for:
+- Authentication failures
+- Network errors
+- Invalid responses
+- Model-specific errors
+
+The provider reuses the OpenAI error handling where applicable for consistency.

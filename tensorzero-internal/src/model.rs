@@ -1984,6 +1984,9 @@ impl ModelProvider {
             ProviderConfig::OpenAI(provider) => {
                 provider.transcribe(request, client, dynamic_api_keys).await
             }
+            ProviderConfig::Fireworks(provider) => {
+                provider.transcribe(request, client, dynamic_api_keys).await
+            }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
                 provider.transcribe(request, client, dynamic_api_keys).await
@@ -2079,6 +2082,11 @@ impl ModelProvider {
                     .await
             }
             ProviderConfig::XAI(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
+            ProviderConfig::Fireworks(provider) => {
                 provider
                     .generate_image(request, client, dynamic_api_keys)
                     .await

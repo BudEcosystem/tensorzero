@@ -15,7 +15,10 @@ use crate::{
     endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails},
     inference::{
-        providers::{openai::OpenAIProvider, together::TogetherProvider, vllm::VLLMProvider},
+        providers::{
+            fireworks::FireworksProvider, openai::OpenAIProvider, together::TogetherProvider,
+            vllm::VLLMProvider,
+        },
         types::{
             current_timestamp, Latency, ModelInferenceResponseWithMetadata, RequestMessage, Role,
             Usage,
@@ -34,7 +37,7 @@ use crate::inference::providers::dummy::DummyProvider;
 pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
 
 impl ShorthandModelConfig for EmbeddingModelConfig {
-    const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "vllm::", "together::"];
+    const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "vllm::", "together::", "fireworks::"];
     const MODEL_TYPE: &str = "Embedding model";
     async fn from_shorthand(provider_type: &str, model_name: &str) -> Result<Self, Error> {
         let model_name = model_name.to_string();
@@ -53,6 +56,9 @@ impl ShorthandModelConfig for EmbeddingModelConfig {
             }
             "together" => {
                 EmbeddingProviderConfig::Together(TogetherProvider::new(model_name, None, false)?)
+            }
+            "fireworks" => {
+                EmbeddingProviderConfig::Fireworks(FireworksProvider::new(model_name, None, false)?)
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             "dummy" => EmbeddingProviderConfig::Dummy(DummyProvider::new(model_name, None)?),
@@ -366,6 +372,7 @@ pub enum EmbeddingProviderConfig {
     OpenAI(OpenAIProvider),
     VLLM(VLLMProvider),
     Together(TogetherProvider),
+    Fireworks(FireworksProvider),
     #[cfg(any(test, feature = "e2e_tests"))]
     Dummy(DummyProvider),
 }
@@ -386,6 +393,7 @@ impl UninitializedEmbeddingProviderConfig {
             ProviderConfig::OpenAI(provider) => EmbeddingProviderConfig::OpenAI(provider),
             ProviderConfig::VLLM(provider) => EmbeddingProviderConfig::VLLM(provider),
             ProviderConfig::Together(provider) => EmbeddingProviderConfig::Together(provider),
+            ProviderConfig::Fireworks(provider) => EmbeddingProviderConfig::Fireworks(provider),
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => EmbeddingProviderConfig::Dummy(provider),
             _ => {
@@ -414,6 +422,9 @@ impl EmbeddingProvider for EmbeddingProviderConfig {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             EmbeddingProviderConfig::Together(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
+            EmbeddingProviderConfig::Fireworks(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
