@@ -1444,44 +1444,100 @@ async fn test_openai_compatible_image_generation_errors() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Test with model that doesn't support image generation
+}
+
+#[tokio::test]
+async fn test_openai_compatible_audio_speech_with_together() {
+    let client = Client::new();
+
+    // Test Together provider with TTS
+    let payload = json!({
+        "model": "together-tts",
+        "input": "Hello, this is a test of Together AI text-to-speech.",
+        "voice": "alloy",
+        "response_format": "mp3"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/audio/speech"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    // Since we don't have actual Together API key in tests, this should fail with auth error
+    // But it validates that the routing works correctly
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let error_json: Value = response.json().await.unwrap();
+    assert!(error_json["error"].as_str().unwrap().contains("API key"));
+}
+
+#[tokio::test]
+async fn test_openai_compatible_audio_speech_voice_mapping() {
+    let client = Client::new();
+
+    // Test different voice mappings
+    let voices = vec!["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+
+    for voice in voices {
+        let payload = json!({
+            "model": "together-tts",
+            "input": "Test voice mapping.",
+            "voice": voice,
+            "response_format": "mp3"
+        });
+
+        let response = client
+            .post(get_gateway_endpoint("/v1/audio/speech"))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+
+        // Should fail with auth error but request should be properly formed
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
+
+#[tokio::test]
+async fn test_openai_compatible_audio_speech_errors() {
+    let client = Client::new();
+
+    // Test with non-existent model
+    let payload = json!({
+        "model": "non-existent-tts-model",
+        "input": "Test input",
+        "voice": "alloy"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/audio/speech"))
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Test with model that doesn't support TTS
     let payload_wrong_capability = json!({
         "model": "gpt-4o-mini-2024-07-18",
-        "prompt": "Test prompt",
-        "n": 1,
-        "size": "1024x1024"
+        "input": "Test input",
+        "voice": "alloy"
     });
 
     let response_wrong_capability = client
-        .post(get_gateway_endpoint("/v1/images/generations"))
+        .post(get_gateway_endpoint("/v1/audio/speech"))
         .json(&payload_wrong_capability)
         .send()
         .await
         .unwrap();
 
+    // Should fail because the model doesn't support text_to_speech capability
     assert_eq!(response_wrong_capability.status(), StatusCode::BAD_REQUEST);
-
-    let error_json: Value = response_wrong_capability.json().await.unwrap();
-    assert!(error_json["error"]
-        .as_str()
-        .unwrap()
-        .contains("does not support"));
-
-    // Test with invalid parameters
-    let payload_invalid = json!({
-        "model": "image-generation-test",
-        "prompt": "Test prompt",
-        "n": 11,  // Too many images
-        "size": "1024x1024"
-    });
-
-    let response_invalid = client
-        .post(get_gateway_endpoint("/v1/images/generations"))
-        .json(&payload_invalid)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response_invalid.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

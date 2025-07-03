@@ -2251,7 +2251,7 @@ pub async fn text_to_speech_handler(
             })
         })?;
 
-    // Convert voice parameter
+    // Convert voice parameter - try standard OpenAI voices first, then use Other for provider-specific voices
     let voice = match params.voice.as_str() {
         "alloy" => AudioVoice::Alloy,
         "ash" => AudioVoice::Ash,
@@ -2264,11 +2264,8 @@ pub async fn text_to_speech_handler(
         "sage" => AudioVoice::Sage,
         "shimmer" => AudioVoice::Shimmer,
         "verse" => AudioVoice::Verse,
-        _ => {
-            return Err(Error::new(ErrorDetails::InvalidRequest {
-                message: format!("Unsupported voice: {}", params.voice),
-            }))
-        }
+        // For non-standard voices, use Other variant to preserve the original voice string
+        _ => AudioVoice::Other(params.voice.clone()),
     };
 
     // Convert response format
@@ -4733,9 +4730,12 @@ mod tests {
         let nova_voice: AudioVoice = serde_json::from_str("\"nova\"").unwrap();
         assert!(matches!(nova_voice, AudioVoice::Nova));
 
-        // Test invalid voice
-        let invalid_voice = serde_json::from_str::<AudioVoice>("\"invalid_voice\"");
-        assert!(invalid_voice.is_err());
+        // Test non-standard voice becomes Other variant
+        let other_voice: AudioVoice = serde_json::from_str("\"invalid_voice\"").unwrap();
+        assert!(matches!(other_voice, AudioVoice::Other(_)));
+        if let AudioVoice::Other(voice_name) = other_voice {
+            assert_eq!(voice_name, "invalid_voice");
+        }
     }
 
     #[test]

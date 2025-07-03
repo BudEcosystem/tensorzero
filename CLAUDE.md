@@ -495,6 +495,14 @@ The xAI provider now supports image generation through OpenAI-compatible endpoin
 - **grok-2-image** - xAI's high-quality image generation model
 - **Pricing**: $0.07 per image
 - **Rate Limits**: 5 requests/second, up to 10 images per request
+## Together Provider Text-to-Speech
+
+### Overview
+
+The Together provider now supports text-to-speech (TTS) through OpenAI-compatible endpoints, enabling access to Cartesia's Sonic model:
+- **Cartesia Sonic** - High-quality text-to-speech model with 100+ available voices
+- **Real-time generation** - Fast synthesis suitable for interactive applications
+- **Multiple output formats** - Support for MP3 and raw PCM audio
 
 ### Configuration
 
@@ -508,6 +516,14 @@ endpoints = ["image_generation"]
 type = "xai"
 model_name = "grok-2-image"
 api_key_location = { env = "XAI_API_KEY" }
+# Text-to-speech model configuration
+[models."together-tts"]
+routing = ["together"]
+endpoints = ["text_to_speech"]
+
+[models."together-tts".providers.together]
+type = "together"
+model_name = "cartesia/sonic"
 ```
 
 ### API Usage
@@ -559,6 +575,136 @@ The xAI provider includes comprehensive error handling for:
 - Invalid prompts or content policy violations
 - Network timeouts and connection issues
 - Authentication failures
+Together's TTS follows the OpenAI-compatible format:
+
+```bash
+# Generate speech from text
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Hello, this is a test of Together AI text-to-speech.",
+    "voice": "alloy",
+    "response_format": "mp3"
+  }'
+```
+
+### Voice Support
+
+TensorZero supports **all of Together AI's 100+ voices** through flexible voice handling:
+
+#### Standard Voice Mapping
+TensorZero's standardized voice names are mapped to Together's descriptive voice names:
+
+| TensorZero Voice | Together Voice Name         | Description                    |
+|------------------|----------------------------|--------------------------------|
+| `alloy`          | `helpful woman`            | Clear, professional female     |
+| `echo`           | `laidback woman`           | Relaxed, casual female         |
+| `fable`          | `meditation lady`          | Calm, soothing female          |
+| `onyx`           | `newsman`                  | Authoritative male narrator    |
+| `nova`           | `friendly sidekick`        | Enthusiastic, supportive       |
+| `shimmer`        | `british reading lady`     | British accent, clear diction  |
+| `ash`            | `barbershop man`           | Warm, conversational male      |
+| `ballad`         | `indian lady`              | Indian accent female           |
+| `coral`          | `german conversational woman` | German accent female        |
+| `sage`           | `pilot over intercom`      | Clear, professional male       |
+| `verse`          | `australian customer support man` | Australian accent male  |
+
+#### Full Voice Catalog Support
+You can use **any of Together AI's voices directly** by specifying the exact voice name:
+
+**Popular Together Voices:**
+- `german conversational woman`
+- `french narrator lady`
+- `japanese woman conversational`
+- `british narration lady`
+- `spanish narrator man`
+- `meditation lady`
+- `helpful woman`
+- `newsman`
+- `1920's radioman`
+- `calm lady`
+- `wise man`
+- `customer support lady`
+- `announcer man`
+- `asmr lady`
+- `storyteller lady`
+- `princess`
+- `doctor mischief`
+- And 80+ more voices!
+
+### Implementation Details
+
+1. **Provider Implementation**: `TogetherProvider` implements the `TextToSpeechProvider` trait
+2. **Endpoint**: Uses Together's audio endpoint: `https://api.together.xyz/v1/audio/generations`
+3. **Model**: Always uses `cartesia/sonic` (Together's only TTS model)
+4. **Authentication**: Uses the same API key configuration as chat completions
+5. **Sample Rate**: Automatically set to 44.1kHz for optimal quality
+
+### Supported Output Formats
+
+- **MP3** - Compressed audio format (default)
+- **Raw PCM** - Uncompressed audio for processing
+
+### Usage Examples
+
+```bash
+# Standard OpenAI voice (mapped to Together voice)
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "The weather today is sunny and warm.",
+    "voice": "nova"
+  }'
+
+# Together-specific voice (used directly)
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Bonjour! Comment allez-vous?",
+    "voice": "french narrator lady",
+    "response_format": "mp3"
+  }'
+
+# Another Together-specific voice example
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Guten Tag! Wie geht es Ihnen?",
+    "voice": "german conversational woman"
+  }'
+
+# Creative voice example
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Welcome to the magical realm!",
+    "voice": "princess"
+  }'
+```
+
+### Limitations
+
+- Only text-to-speech is supported (no speech-to-text or translation)
+- Limited to Cartesia Sonic model (no model selection)
+- No streaming support (planned for future enhancement)
+- No caching support for audio responses
+
+### Error Handling
+
+Common error scenarios:
+- **Unsupported Format**: Returns error for formats other than MP3 or raw PCM
+- **Authentication**: Returns API key missing error without valid Together API key
+- **Rate Limits**: Subject to Together AI's rate limiting policies
 
 ### Testing
 
@@ -577,3 +723,14 @@ Potential improvements that could be added when xAI expands their API:
 - Quality settings
 - Style parameters
 - Batch processing optimizations
+# Run unit tests for voice mapping and serialization
+cargo test --package tensorzero-internal test_map_audio_voice_to_together
+cargo test --package tensorzero-internal test_together_tts_request_serialization
+
+# Run integration tests (requires test configuration and gateway)
+cargo test --test e2e --features e2e_tests test_openai_compatible_audio_speech_with_together
+```
+
+### Pricing
+
+Text-to-speech with Cartesia Sonic is priced at $65 per 1 million characters. For current pricing details, refer to [Together AI's pricing page](https://www.together.ai/pricing).
