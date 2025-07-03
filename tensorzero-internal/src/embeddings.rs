@@ -34,7 +34,7 @@ use crate::inference::providers::dummy::DummyProvider;
 pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
 
 impl ShorthandModelConfig for EmbeddingModelConfig {
-    const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "vllm::", "together::"];
+    const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "vllm::", "together::", "mistral::"];
     const MODEL_TYPE: &str = "Embedding model";
     async fn from_shorthand(provider_type: &str, model_name: &str) -> Result<Self, Error> {
         let model_name = model_name.to_string();
@@ -54,6 +54,9 @@ impl ShorthandModelConfig for EmbeddingModelConfig {
             "together" => {
                 EmbeddingProviderConfig::Together(TogetherProvider::new(model_name, None, false)?)
             }
+            "mistral" => EmbeddingProviderConfig::Mistral(
+                crate::inference::providers::mistral::MistralProvider::new(model_name, None)?,
+            ),
             #[cfg(any(test, feature = "e2e_tests"))]
             "dummy" => EmbeddingProviderConfig::Dummy(DummyProvider::new(model_name, None)?),
             _ => {
@@ -366,6 +369,7 @@ pub enum EmbeddingProviderConfig {
     OpenAI(OpenAIProvider),
     VLLM(VLLMProvider),
     Together(TogetherProvider),
+    Mistral(crate::inference::providers::mistral::MistralProvider),
     #[cfg(any(test, feature = "e2e_tests"))]
     Dummy(DummyProvider),
 }
@@ -386,6 +390,7 @@ impl UninitializedEmbeddingProviderConfig {
             ProviderConfig::OpenAI(provider) => EmbeddingProviderConfig::OpenAI(provider),
             ProviderConfig::VLLM(provider) => EmbeddingProviderConfig::VLLM(provider),
             ProviderConfig::Together(provider) => EmbeddingProviderConfig::Together(provider),
+            ProviderConfig::Mistral(provider) => EmbeddingProviderConfig::Mistral(provider),
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => EmbeddingProviderConfig::Dummy(provider),
             _ => {
@@ -414,6 +419,9 @@ impl EmbeddingProvider for EmbeddingProviderConfig {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             EmbeddingProviderConfig::Together(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
+            EmbeddingProviderConfig::Mistral(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
