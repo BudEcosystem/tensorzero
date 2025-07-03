@@ -1715,6 +1715,29 @@ pub async fn moderation_handler(
                     }
                 }
             }
+            crate::model::ProviderConfig::Mistral(mistral_provider) => {
+                tracing::info!("Found Mistral provider for moderation");
+                // For Mistral, we need to use the provider's configured model name
+                let mut provider_request = moderation_request.clone();
+                provider_request.model = Some(mistral_provider.model_name().to_string());
+                // Use the Mistral provider's moderation capability
+                match mistral_provider
+                    .moderate(&provider_request, clients.http_client, &credentials)
+                    .await
+                {
+                    Ok(provider_response) => {
+                        response = Some(crate::moderation::ModerationResponse::new(
+                            provider_response,
+                            provider_name.clone(),
+                        ));
+                        break;
+                    }
+                    Err(e) => {
+                        provider_errors.insert(provider_name.to_string(), e);
+                        continue;
+                    }
+                }
+            }
             #[cfg(any(test, feature = "e2e_tests"))]
             crate::model::ProviderConfig::Dummy(dummy_provider) => {
                 tracing::info!("Found Dummy provider for moderation");

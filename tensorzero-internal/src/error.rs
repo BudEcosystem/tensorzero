@@ -399,6 +399,10 @@ pub enum ErrorDetails {
         capability: String,
         provider: String,
     },
+    ModelNotConfiguredForCapability {
+        model_name: String,
+        capability: String,
+    },
 }
 
 impl ErrorDetails {
@@ -493,6 +497,7 @@ impl ErrorDetails {
             ErrorDetails::KafkaProducer { .. } => tracing::Level::ERROR,
             ErrorDetails::KafkaSerialization { .. } => tracing::Level::ERROR,
             ErrorDetails::CapabilityNotSupported { .. } => tracing::Level::WARN,
+            ErrorDetails::ModelNotConfiguredForCapability { .. } => tracing::Level::WARN,
         }
     }
 
@@ -595,6 +600,7 @@ impl ErrorDetails {
             ErrorDetails::KafkaProducer { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::KafkaSerialization { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::CapabilityNotSupported { .. } => StatusCode::BAD_REQUEST,
+            ErrorDetails::ModelNotConfiguredForCapability { .. } => StatusCode::BAD_REQUEST,
         }
     }
 
@@ -1017,6 +1023,15 @@ impl std::fmt::Display for ErrorDetails {
                     "Provider `{provider}` does not support capability `{capability}`"
                 )
             }
+            ErrorDetails::ModelNotConfiguredForCapability {
+                model_name,
+                capability,
+            } => {
+                write!(
+                    f,
+                    "Model `{model_name}` is not configured to support capability `{capability}`. Add `endpoints = [\"{capability}\"]` to the model configuration."
+                )
+            }
         }
     }
 }
@@ -1067,6 +1082,26 @@ mod tests {
             formatted,
             "Provider `embedding_only_model` does not support capability `chat`"
         );
+    }
+
+    #[test]
+    fn test_model_not_configured_for_capability_error() {
+        let error = Error::new(ErrorDetails::ModelNotConfiguredForCapability {
+            model_name: "mistral-embed".to_string(),
+            capability: "embedding".to_string(),
+        });
+
+        // Test error message
+        assert_eq!(
+            error.to_string(),
+            "Model `mistral-embed` is not configured to support capability `embedding`. Add `endpoints = [\"embedding\"]` to the model configuration."
+        );
+
+        // Test status code
+        assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
+
+        // Test log level
+        assert_eq!(error.get_details().level(), tracing::Level::WARN);
     }
 
     #[test]
