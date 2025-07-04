@@ -16,6 +16,7 @@ mod kafka_integration;
 mod mixture_of_n;
 mod moderation;
 mod object_storage;
+mod openai_batch_file_api;
 mod openai_compatible;
 mod otel;
 mod otel_jaeger;

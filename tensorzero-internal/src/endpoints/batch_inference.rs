@@ -345,7 +345,10 @@ pub async fn poll_batch_inference_handler(
 ) -> Result<Response<Body>, Error> {
     let batch_request = get_batch_request(&clickhouse_connection_info, &path_params).await?;
     match batch_request.status {
-        BatchStatus::Pending => {
+        BatchStatus::Pending
+        | BatchStatus::Validating
+        | BatchStatus::InProgress
+        | BatchStatus::Finalizing => {
             // For now, we don't support dynamic API keys for batch inference
             let credentials = InferenceCredentials::default();
             let models = config.models.read().await;
@@ -372,7 +375,24 @@ pub async fn poll_batch_inference_handler(
             let response = PollInferenceResponse::Completed(response);
             Ok(Json(response.filter_by_query(path_params)).into_response())
         }
-        BatchStatus::Failed => Ok(Json(PollInferenceResponse::Failed).into_response()),
+        BatchStatus::Failed | BatchStatus::Expired | BatchStatus::Cancelled => {
+            Ok(Json(PollInferenceResponse::Failed).into_response())
+        }
+        BatchStatus::Cancelling => {
+            // Treat cancelling as pending for now
+            let credentials = InferenceCredentials::default();
+            let models = config.models.read().await;
+            let response =
+                poll_batch_inference(&batch_request, http_client, &models, &credentials).await?;
+            let response = write_poll_batch_inference(
+                &clickhouse_connection_info,
+                &batch_request,
+                response,
+                &config,
+            )
+            .await?;
+            Ok(Json(response.filter_by_query(path_params)).into_response())
+        }
     }
 }
 
@@ -645,6 +665,23 @@ async fn write_start_batch_inference<'a>(
         model_provider_name: &result.model_provider_name,
         status: BatchStatus::Pending,
         errors: result.errors,
+        // Default OpenAI fields to None for TensorZero native batches
+        openai_batch_id: None,
+        completion_window: None,
+        input_file_id: None,
+        output_file_id: None,
+        error_file_id: None,
+        created_at: None,
+        in_progress_at: None,
+        expires_at: None,
+        finalizing_at: None,
+        completed_at: None,
+        failed_at: None,
+        expired_at: None,
+        cancelling_at: None,
+        cancelled_at: None,
+        request_counts: None,
+        metadata: None,
     });
     write_batch_request_row(clickhouse_connection_info, &batch_request_insert).await?;
 
@@ -758,6 +795,23 @@ async fn write_batch_request_status_update(
         model_provider_name: &batch_request.model_provider_name,
         status,
         errors: vec![], // TODO (#503): add better error handling
+        // Preserve existing OpenAI fields from original request
+        openai_batch_id: batch_request.openai_batch_id.clone(),
+        completion_window: batch_request.completion_window.clone(),
+        input_file_id: batch_request.input_file_id.clone(),
+        output_file_id: batch_request.output_file_id.clone(),
+        error_file_id: batch_request.error_file_id.clone(),
+        created_at: batch_request.created_at,
+        in_progress_at: batch_request.in_progress_at,
+        expires_at: batch_request.expires_at,
+        finalizing_at: batch_request.finalizing_at,
+        completed_at: batch_request.completed_at,
+        failed_at: batch_request.failed_at,
+        expired_at: batch_request.expired_at,
+        cancelling_at: batch_request.cancelling_at,
+        cancelled_at: batch_request.cancelled_at,
+        request_counts: batch_request.request_counts.clone(),
+        metadata: batch_request.metadata.clone(),
     });
     clickhouse_connection_info
         .write(&[batch_request_insert], "BatchRequest")

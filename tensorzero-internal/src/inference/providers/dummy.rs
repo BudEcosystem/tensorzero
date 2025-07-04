@@ -1323,6 +1323,205 @@ impl ResponseProvider for DummyProvider {
     }
 }
 
+// Implement BatchProvider for testing purposes
+#[async_trait::async_trait]
+impl crate::inference::providers::batch::BatchProvider for DummyProvider {
+    async fn upload_file(
+        &self,
+        content: Vec<u8>,
+        filename: String,
+        purpose: String,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Return a dummy file object
+        Ok(crate::openai_batch::OpenAIFileObject {
+            id: format!("file-{}", Uuid::now_v7()),
+            object: "file".to_string(),
+            bytes: content.len() as i64,
+            created_at: current_timestamp() as i64,
+            filename,
+            purpose,
+            status: Some("processed".to_string()),
+            status_details: None,
+        })
+    }
+
+    async fn get_file(
+        &self,
+        file_id: &str,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Return a dummy file object
+        Ok(crate::openai_batch::OpenAIFileObject {
+            id: file_id.to_string(),
+            object: "file".to_string(),
+            bytes: 1024,
+            created_at: current_timestamp() as i64,
+            filename: "dummy_file.jsonl".to_string(),
+            purpose: "batch".to_string(),
+            status: Some("processed".to_string()),
+            status_details: None,
+        })
+    }
+
+    async fn get_file_content(
+        &self,
+        _file_id: &str,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<Vec<u8>, Error> {
+        // Return dummy JSONL content for batch files
+        let jsonl_content = r#"{"custom_id": "req-1", "method": "POST", "url": "/v1/chat/completions", "body": {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hello"}]}}
+{"custom_id": "req-2", "method": "POST", "url": "/v1/chat/completions", "body": {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "World"}]}}"#;
+        Ok(jsonl_content.as_bytes().to_vec())
+    }
+
+    async fn delete_file(
+        &self,
+        file_id: &str,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Return a dummy deleted file object
+        Ok(crate::openai_batch::OpenAIFileObject {
+            id: file_id.to_string(),
+            object: "file".to_string(),
+            bytes: 0,
+            created_at: current_timestamp() as i64,
+            filename: "deleted_file.jsonl".to_string(),
+            purpose: "batch".to_string(),
+            status: Some("deleted".to_string()),
+            status_details: None,
+        })
+    }
+
+    async fn create_batch(
+        &self,
+        input_file_id: String,
+        endpoint: String,
+        completion_window: String,
+        metadata: Option<std::collections::HashMap<String, String>>,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Return a dummy batch object
+        Ok(crate::openai_batch::OpenAIBatchObject {
+            id: format!("batch_{}", Uuid::now_v7()),
+            object: "batch".to_string(),
+            endpoint,
+            errors: None,
+            input_file_id,
+            completion_window,
+            status: crate::openai_batch::OpenAIBatchStatus::Validating,
+            output_file_id: None,
+            error_file_id: None,
+            created_at: current_timestamp() as i64,
+            in_progress_at: None,
+            expires_at: Some(current_timestamp() as i64 + 86400),
+            finalizing_at: None,
+            completed_at: None,
+            failed_at: None,
+            expired_at: None,
+            cancelling_at: None,
+            cancelled_at: None,
+            request_counts: crate::openai_batch::RequestCounts {
+                total: 0,
+                completed: 0,
+                failed: 0,
+            },
+            metadata,
+        })
+    }
+
+    async fn get_batch(
+        &self,
+        batch_id: &str,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Return a dummy batch object
+        Ok(crate::openai_batch::OpenAIBatchObject {
+            id: batch_id.to_string(),
+            object: "batch".to_string(),
+            endpoint: "/v1/chat/completions".to_string(),
+            errors: None,
+            input_file_id: "file-123".to_string(),
+            completion_window: "24h".to_string(),
+            status: crate::openai_batch::OpenAIBatchStatus::Completed,
+            output_file_id: Some("file-456".to_string()),
+            error_file_id: None,
+            created_at: current_timestamp() as i64,
+            in_progress_at: Some(current_timestamp() as i64),
+            expires_at: Some(current_timestamp() as i64 + 86400),
+            finalizing_at: Some(current_timestamp() as i64),
+            completed_at: Some(current_timestamp() as i64),
+            failed_at: None,
+            expired_at: None,
+            cancelling_at: None,
+            cancelled_at: None,
+            request_counts: crate::openai_batch::RequestCounts {
+                total: 1,
+                completed: 1,
+                failed: 0,
+            },
+            metadata: None,
+        })
+    }
+
+    async fn list_batches(
+        &self,
+        _params: crate::openai_batch::ListBatchesParams,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::ListBatchesResponse, Error> {
+        // Return a dummy list response
+        Ok(crate::openai_batch::ListBatchesResponse {
+            object: "list".to_string(),
+            data: vec![],
+            first_id: None,
+            last_id: None,
+            has_more: false,
+        })
+    }
+
+    async fn cancel_batch(
+        &self,
+        batch_id: &str,
+        _client: &reqwest::Client,
+        _api_keys: &InferenceCredentials,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Return a dummy cancelled batch object
+        Ok(crate::openai_batch::OpenAIBatchObject {
+            id: batch_id.to_string(),
+            object: "batch".to_string(),
+            endpoint: "/v1/chat/completions".to_string(),
+            errors: None,
+            input_file_id: "file-123".to_string(),
+            completion_window: "24h".to_string(),
+            status: crate::openai_batch::OpenAIBatchStatus::Cancelled,
+            output_file_id: None,
+            error_file_id: None,
+            created_at: current_timestamp() as i64,
+            in_progress_at: Some(current_timestamp() as i64),
+            expires_at: Some(current_timestamp() as i64 + 86400),
+            finalizing_at: None,
+            completed_at: None,
+            failed_at: None,
+            expired_at: None,
+            cancelling_at: Some(current_timestamp() as i64),
+            cancelled_at: Some(current_timestamp() as i64),
+            request_counts: crate::openai_batch::RequestCounts {
+                total: 1,
+                completed: 0,
+                failed: 0,
+            },
+            metadata: None,
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl crate::realtime::RealtimeSessionProvider for DummyProvider {
     async fn create_session(

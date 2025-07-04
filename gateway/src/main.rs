@@ -279,6 +279,40 @@ async fn main() {
         .route(
             "/v1/responses/{response_id}/input_items",
             get(endpoints::openai_compatible::response_input_items_handler),
+        )
+        // File management endpoints for OpenAI Batch API
+        .route(
+            "/v1/files",
+            post(endpoints::openai_compatible::file_upload_handler),
+        )
+        .route(
+            "/v1/files/{file_id}",
+            get(endpoints::openai_compatible::file_retrieve_handler),
+        )
+        .route(
+            "/v1/files/{file_id}",
+            delete(endpoints::openai_compatible::file_delete_handler),
+        )
+        .route(
+            "/v1/files/{file_id}/content",
+            get(endpoints::openai_compatible::file_content_handler),
+        )
+        // Batch management endpoints for OpenAI Batch API
+        .route(
+            "/v1/batches",
+            post(endpoints::openai_compatible::batch_create_handler),
+        )
+        .route(
+            "/v1/batches",
+            get(endpoints::openai_compatible::batch_list_handler),
+        )
+        .route(
+            "/v1/batches/{batch_id}",
+            get(endpoints::openai_compatible::batch_retrieve_handler),
+        )
+        .route(
+            "/v1/batches/{batch_id}/cancel",
+            post(endpoints::openai_compatible::batch_cancel_handler),
         );
 
     // Apply authentication middleware only if authentication is enabled
