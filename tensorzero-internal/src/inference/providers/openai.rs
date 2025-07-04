@@ -1288,7 +1288,7 @@ impl TextToSpeechProvider for OpenAIProvider {
             speed: Option<f32>,
         }
 
-        let voice_str = match request.voice {
+        let voice_str = match &request.voice {
             AudioVoice::Alloy => "alloy",
             AudioVoice::Ash => "ash",
             AudioVoice::Ballad => "ballad",
@@ -1300,6 +1300,13 @@ impl TextToSpeechProvider for OpenAIProvider {
             AudioVoice::Sage => "sage",
             AudioVoice::Shimmer => "shimmer",
             AudioVoice::Verse => "verse",
+            AudioVoice::Other(voice_name) => {
+                return Err(Error::new(ErrorDetails::InvalidRequest {
+                    message: format!(
+                        "OpenAI TTS does not support voice: '{voice_name}'. Supported voices: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse"
+                    ),
+                }));
+            }
         };
 
         let format_str = request.response_format.as_ref().map(|f| match f {

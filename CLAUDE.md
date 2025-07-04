@@ -486,3 +486,433 @@ cargo test --package tensorzero-internal test_together_image
 # Run integration tests (requires test configuration)
 cargo test --package tensorzero-internal test_openai_compatible_image_generation
 ```
+
+## xAI Provider Image Generation
+
+### Overview
+
+The xAI provider now supports image generation through OpenAI-compatible endpoints, enabling access to xAI's `grok-2-image` model:
+- **grok-2-image** - xAI's high-quality image generation model
+- **Pricing**: $0.07 per image
+- **Rate Limits**: 5 requests/second, up to 10 images per request
+## Together Provider Text-to-Speech
+
+### Overview
+
+The Together provider now supports text-to-speech (TTS) through OpenAI-compatible endpoints, enabling access to Cartesia's Sonic model:
+- **Cartesia Sonic** - High-quality text-to-speech model with 100+ available voices
+- **Real-time generation** - Fast synthesis suitable for interactive applications
+- **Multiple output formats** - Support for MP3 and raw PCM audio
+
+### Configuration
+
+```toml
+# Image generation model configuration
+[models."grok-2-image"]
+routing = ["xai"]
+endpoints = ["image_generation"]
+
+[models."grok-2-image".providers.xai]
+type = "xai"
+model_name = "grok-2-image"
+api_key_location = { env = "XAI_API_KEY" }
+# Text-to-speech model configuration
+[models."together-tts"]
+routing = ["together"]
+endpoints = ["text_to_speech"]
+
+[models."together-tts".providers.together]
+type = "together"
+model_name = "cartesia/sonic"
+```
+
+### API Usage
+
+xAI's image generation follows the OpenAI-compatible format:
+
+```bash
+# Generate an image
+curl -X POST http://localhost:3000/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "grok-2-image",
+    "prompt": "A futuristic city at sunset",
+    "n": 1,
+    "response_format": "url"
+  }'
+```
+
+### Implementation Details
+
+1. **Provider Implementation**: `XAIProvider` implements the `ImageGenerationProvider` trait
+2. **Endpoint**: Uses xAI's OpenAI-compatible endpoint: `https://api.x.ai/v1/images/generations`
+3. **Authentication**: Uses the same API key configuration as chat completions
+4. **Response Format**: Returns standard OpenAI image response format with URLs or base64 data
+
+### Supported Parameters
+
+xAI supports a subset of OpenAI's image generation parameters:
+- `model`: Always "grok-2-image"
+- `prompt`: Required string describing the image to generate
+- `n`: Number of images to generate (1-10, default: 1)
+- `response_format`: "url" or "b64_json" (default: "url")
+- `user`: Optional string for abuse monitoring
+
+### Limitations
+
+Unlike OpenAI's DALL-E models, xAI currently doesn't support:
+- `quality`: Not supported by xAI API
+- `size`: Not supported by xAI API  
+- `style`: Not supported by xAI API
+
+These parameters are ignored gracefully if provided.
+
+### Error Handling
+
+The xAI provider includes comprehensive error handling for:
+- Rate limiting (5 requests/second)
+- Invalid prompts or content policy violations
+- Network timeouts and connection issues
+- Authentication failures
+Together's TTS follows the OpenAI-compatible format:
+
+```bash
+# Generate speech from text
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Hello, this is a test of Together AI text-to-speech.",
+    "voice": "alloy",
+    "response_format": "mp3"
+  }'
+```
+
+### Voice Support
+
+TensorZero supports **all of Together AI's 100+ voices** through flexible voice handling:
+
+#### Standard Voice Mapping
+TensorZero's standardized voice names are mapped to Together's descriptive voice names:
+
+| TensorZero Voice | Together Voice Name         | Description                    |
+|------------------|----------------------------|--------------------------------|
+| `alloy`          | `helpful woman`            | Clear, professional female     |
+| `echo`           | `laidback woman`           | Relaxed, casual female         |
+| `fable`          | `meditation lady`          | Calm, soothing female          |
+| `onyx`           | `newsman`                  | Authoritative male narrator    |
+| `nova`           | `friendly sidekick`        | Enthusiastic, supportive       |
+| `shimmer`        | `british reading lady`     | British accent, clear diction  |
+| `ash`            | `barbershop man`           | Warm, conversational male      |
+| `ballad`         | `indian lady`              | Indian accent female           |
+| `coral`          | `german conversational woman` | German accent female        |
+| `sage`           | `pilot over intercom`      | Clear, professional male       |
+| `verse`          | `australian customer support man` | Australian accent male  |
+
+#### Full Voice Catalog Support
+You can use **any of Together AI's voices directly** by specifying the exact voice name:
+
+**Popular Together Voices:**
+- `german conversational woman`
+- `french narrator lady`
+- `japanese woman conversational`
+- `british narration lady`
+- `spanish narrator man`
+- `meditation lady`
+- `helpful woman`
+- `newsman`
+- `1920's radioman`
+- `calm lady`
+- `wise man`
+- `customer support lady`
+- `announcer man`
+- `asmr lady`
+- `storyteller lady`
+- `princess`
+- `doctor mischief`
+- And 80+ more voices!
+
+### Implementation Details
+
+1. **Provider Implementation**: `TogetherProvider` implements the `TextToSpeechProvider` trait
+2. **Endpoint**: Uses Together's audio endpoint: `https://api.together.xyz/v1/audio/generations`
+3. **Model**: Always uses `cartesia/sonic` (Together's only TTS model)
+4. **Authentication**: Uses the same API key configuration as chat completions
+5. **Sample Rate**: Automatically set to 44.1kHz for optimal quality
+
+### Supported Output Formats
+
+- **MP3** - Compressed audio format (default)
+- **Raw PCM** - Uncompressed audio for processing
+
+### Usage Examples
+
+```bash
+# Standard OpenAI voice (mapped to Together voice)
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "The weather today is sunny and warm.",
+    "voice": "nova"
+  }'
+
+# Together-specific voice (used directly)
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Bonjour! Comment allez-vous?",
+    "voice": "french narrator lady",
+    "response_format": "mp3"
+  }'
+
+# Another Together-specific voice example
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Guten Tag! Wie geht es Ihnen?",
+    "voice": "german conversational woman"
+  }'
+
+# Creative voice example
+curl -X POST http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "together-tts",
+    "input": "Welcome to the magical realm!",
+    "voice": "princess"
+  }'
+```
+
+### Limitations
+
+- Only text-to-speech is supported (no speech-to-text or translation)
+- Limited to Cartesia Sonic model (no model selection)
+- No streaming support (planned for future enhancement)
+- No caching support for audio responses
+
+### Error Handling
+
+Common error scenarios:
+- **Unsupported Format**: Returns error for formats other than MP3 or raw PCM
+- **Authentication**: Returns API key missing error without valid Together API key
+- **Rate Limits**: Subject to Together AI's rate limiting policies
+
+### Testing
+
+```bash
+# Run unit tests for xAI image generation
+cargo test --package tensorzero-internal test_xai_image
+
+# Run all xAI provider tests
+cargo test --package tensorzero-internal --lib xai
+```
+
+### Future Enhancements
+
+Potential improvements that could be added when xAI expands their API:
+- Image size control
+- Quality settings
+- Style parameters
+- Batch processing optimizations
+# Run unit tests for voice mapping and serialization
+cargo test --package tensorzero-internal test_map_audio_voice_to_together
+cargo test --package tensorzero-internal test_together_tts_request_serialization
+
+# Run integration tests (requires test configuration and gateway)
+cargo test --test e2e --features e2e_tests test_openai_compatible_audio_speech_with_together
+```
+
+### Pricing
+
+Text-to-speech with Cartesia Sonic is priced at $65 per 1 million characters. For current pricing details, refer to [Together AI's pricing page](https://www.together.ai/pricing).
+
+## Fireworks Provider Multimodal Support
+
+### Overview
+
+The Fireworks provider now supports multiple capabilities beyond chat completions:
+- **Embeddings** - Text embeddings with models like Nomic Embed
+- **Image Generation** - Limited support (Fireworks uses async workflow API, not fully compatible)
+- **Audio Transcription** - Speech-to-text with Whisper v3 models
+- **Audio Translation** - Audio to English text translation with Whisper v3 models
+
+### Configuration
+
+#### Embeddings
+```toml
+[models."nomic-embed"]
+routing = ["fireworks"]
+endpoints = ["embedding"]
+
+[models."nomic-embed".providers.fireworks]
+type = "fireworks"
+model_name = "nomic-ai/nomic-embed-text-v1.5"
+```
+
+#### Image Generation (Limited Support)
+```toml
+# NOTE: Fireworks uses an async workflow API for image generation
+# that returns a request_id instead of images directly.
+# This is not currently compatible with TensorZero's synchronous interface.
+# The provider will return an error explaining this limitation.
+
+[models."stable-diffusion-xl"]
+routing = ["fireworks"]
+endpoints = ["image_generation"]
+
+[models."stable-diffusion-xl".providers.fireworks]
+type = "fireworks"
+model_name = "stable-diffusion-xl"
+
+# FLUX models
+[models."flux-schnell"]
+routing = ["fireworks"]
+endpoints = ["image_generation"]
+
+[models."flux-schnell".providers.fireworks]
+type = "fireworks"
+model_name = "flux-schnell"
+```
+
+#### Audio Transcription & Translation
+```toml
+[models."whisper-v3"]
+routing = ["fireworks"]
+endpoints = ["audio_transcription", "audio_translation"]
+
+[models."whisper-v3".providers.fireworks]
+type = "fireworks"
+model_name = "whisper-v3"
+
+# Whisper v3 turbo for faster transcription/translation
+[models."whisper-v3-turbo"]
+routing = ["fireworks"]
+endpoints = ["audio_transcription", "audio_translation"]
+
+[models."whisper-v3-turbo".providers.fireworks]
+type = "fireworks"
+model_name = "whisper-v3-turbo"
+```
+
+### API Usage
+
+#### Embeddings
+```bash
+curl -X POST http://localhost:3000/v1/embeddings \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "nomic-embed",
+    "input": "Your text to embed"
+  }'
+```
+
+#### Image Generation
+```bash
+curl -X POST http://localhost:3000/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "stable-diffusion-xl",
+    "prompt": "A beautiful sunset over mountains",
+    "n": 1,
+    "size": "1024x1024",
+    "response_format": "url"
+  }'
+```
+
+#### Audio Transcription
+```bash
+curl -X POST http://localhost:3000/v1/audio/transcriptions \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@audio.mp3" \
+  -F "model=whisper-v3" \
+  -F "response_format=json"
+```
+
+#### Audio Translation
+```bash
+curl -X POST http://localhost:3000/v1/audio/translations \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "file=@audio.mp3" \
+  -F "model=whisper-v3" \
+  -F "response_format=json"
+```
+
+### Implementation Details
+
+1. **Provider Implementation**: `FireworksProvider` implements:
+   - `EmbeddingProvider` trait for embeddings
+   - `ImageGenerationProvider` trait for image generation
+   - `AudioTranscriptionProvider` trait for audio transcription
+   - `AudioTranslationProvider` trait for audio translation
+
+2. **API Endpoints**: All endpoints use Fireworks' OpenAI-compatible API:
+   - Base URL: `https://api.fireworks.ai/inference/v1/`
+   - Embeddings: `/embeddings`
+   - Images: `/images/generations`
+   - Audio Transcription: `/audio/transcriptions`
+   - Audio Translation: `/audio/translations`
+
+3. **Authentication**: Uses the same API key configuration as chat completions:
+   - Environment variable: `FIREWORKS_API_KEY`
+   - Or configured via `api_key_location` in the model config
+
+### Supported Features
+
+#### Embeddings
+- Single and batch text embedding
+- Optional encoding format (base64)
+- Dimension parameter support (model-dependent)
+- Models: Nomic Embed v1.5 and others
+
+#### Image Generation
+- Multiple image generation (n parameter)
+- Size control
+- Response format: URL or base64
+- Models: Stable Diffusion XL, SSD-1B, Playground v2, FLUX models
+
+#### Audio Transcription & Translation
+- File upload via multipart form data
+- Response formats: json, text (srt/vtt planned)
+- Language detection and specification
+- Temperature control for transcription
+- Translation to English from any source language
+- Models: Whisper v3, Whisper v3 turbo
+
+### Limitations
+
+- Audio endpoints may use special regional URLs (currently using default routing)
+- Image generation uses Fireworks' async workflow API which returns a request_id instead of images directly. This is not compatible with TensorZero's synchronous image generation interface
+- No support for text-to-speech through Fireworks
+
+### Testing
+
+```bash
+# Run unit tests
+cargo test --package tensorzero-internal --lib fireworks::tests
+
+# Test specific functionality
+cargo test --package tensorzero-internal test_fireworks_embedding
+cargo test --package tensorzero-internal test_fireworks_image
+cargo test --package tensorzero-internal test_fireworks_audio
+```
+
+### Error Handling
+
+All implementations include proper error handling for:
+- Authentication failures
+- Network errors
+- Invalid responses
+- Model-specific errors
+
+The provider reuses the OpenAI error handling where applicable for consistency.

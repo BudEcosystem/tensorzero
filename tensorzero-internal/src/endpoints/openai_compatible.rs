@@ -1726,6 +1726,29 @@ pub async fn moderation_handler(
                     }
                 }
             }
+            crate::model::ProviderConfig::Mistral(mistral_provider) => {
+                tracing::info!("Found Mistral provider for moderation");
+                // For Mistral, we need to use the provider's configured model name
+                let mut provider_request = moderation_request.clone();
+                provider_request.model = Some(mistral_provider.model_name().to_string());
+                // Use the Mistral provider's moderation capability
+                match mistral_provider
+                    .moderate(&provider_request, clients.http_client, &credentials)
+                    .await
+                {
+                    Ok(provider_response) => {
+                        response = Some(crate::moderation::ModerationResponse::new(
+                            provider_response,
+                            provider_name.clone(),
+                        ));
+                        break;
+                    }
+                    Err(e) => {
+                        provider_errors.insert(provider_name.to_string(), e);
+                        continue;
+                    }
+                }
+            }
             #[cfg(any(test, feature = "e2e_tests"))]
             crate::model::ProviderConfig::Dummy(dummy_provider) => {
                 tracing::info!("Found Dummy provider for moderation");
@@ -2262,7 +2285,7 @@ pub async fn text_to_speech_handler(
             })
         })?;
 
-    // Convert voice parameter
+    // Convert voice parameter - try standard OpenAI voices first, then use Other for provider-specific voices
     let voice = match params.voice.as_str() {
         "alloy" => AudioVoice::Alloy,
         "ash" => AudioVoice::Ash,
@@ -2275,11 +2298,8 @@ pub async fn text_to_speech_handler(
         "sage" => AudioVoice::Sage,
         "shimmer" => AudioVoice::Shimmer,
         "verse" => AudioVoice::Verse,
-        _ => {
-            return Err(Error::new(ErrorDetails::InvalidRequest {
-                message: format!("Unsupported voice: {}", params.voice),
-            }))
-        }
+        // For non-standard voices, use Other variant to preserve the original voice string
+        _ => AudioVoice::Other(params.voice.clone()),
     };
 
     // Convert response format
@@ -2741,10 +2761,9 @@ pub async fn image_generation_handler(
     {
         Ok(Some(model)) => model,
         Ok(None) => {
-            // Model doesn't exist - return 404 using RouteNotFound
-            return Err(Error::new(ErrorDetails::RouteNotFound {
-                path: "/v1/images/generations".to_string(),
-                method: "POST".to_string(),
+            // Model doesn't exist - return 404 with ModelNotFound error
+            return Err(Error::new(ErrorDetails::ModelNotFound {
+                name: model_name.to_string(),
             }));
         }
         Err(e) => {
@@ -5259,9 +5278,12 @@ mod tests {
         let nova_voice: AudioVoice = serde_json::from_str("\"nova\"").unwrap();
         assert!(matches!(nova_voice, AudioVoice::Nova));
 
-        // Test invalid voice
-        let invalid_voice = serde_json::from_str::<AudioVoice>("\"invalid_voice\"");
-        assert!(invalid_voice.is_err());
+        // Test non-standard voice becomes Other variant
+        let other_voice: AudioVoice = serde_json::from_str("\"invalid_voice\"").unwrap();
+        assert!(matches!(other_voice, AudioVoice::Other(_)));
+        if let AudioVoice::Other(voice_name) = other_voice {
+            assert_eq!(voice_name, "invalid_voice");
+        }
     }
 
     #[test]

@@ -417,6 +417,15 @@ impl<'c> Config<'c> {
                                         crate::embeddings::EmbeddingProviderConfig::VLLM(p) => {
                                             ProviderConfig::VLLM(p)
                                         }
+                                        crate::embeddings::EmbeddingProviderConfig::Together(p) => {
+                                            ProviderConfig::Together(p)
+                                        }
+                                        crate::embeddings::EmbeddingProviderConfig::Fireworks(
+                                            p,
+                                        ) => ProviderConfig::Fireworks(p),
+                                        crate::embeddings::EmbeddingProviderConfig::Mistral(p) => {
+                                            ProviderConfig::Mistral(p)
+                                        }
                                         #[cfg(any(test, feature = "e2e_tests"))]
                                         crate::embeddings::EmbeddingProviderConfig::Dummy(p) => {
                                             ProviderConfig::Dummy(p)

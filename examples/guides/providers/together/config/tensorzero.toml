@@ -1,4 +1,3 @@
-# Chat completion models
 [models.llama3_1_8b_instruct_turbo]
 routing = ["together"]
 endpoints = ["chat"]
@@ -6,6 +5,20 @@ endpoints = ["chat"]
 [models.llama3_1_8b_instruct_turbo.providers.together]
 type = "together"
 model_name = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+
+# Embedding model example
+[models.bge_base_en]
+routing = ["together"]
+endpoints = ["embedding"]
+
+[models.bge_base_en.providers.together]
+type = "together"
+model_name = "BAAI/bge-base-en-v1.5"
+
+# Example using shorthand notation for embedding model
+# [models]
+# "together::BAAI/bge-base-en-v1.5" = {}
+# "together::togethercomputer/m2-bert-80M-8k-retrieval" = {}
 
 # Image generation models
 [models.flux_schnell]
