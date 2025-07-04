@@ -1949,6 +1949,9 @@ impl ModelProvider {
         use crate::embeddings::EmbeddingProvider;
 
         match &self.config {
+            ProviderConfig::Azure(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
             ProviderConfig::OpenAI(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
@@ -1987,6 +1990,9 @@ impl ModelProvider {
         use crate::audio::AudioTranscriptionProvider;
 
         match &self.config {
+            ProviderConfig::Azure(provider) => {
+                provider.transcribe(request, client, dynamic_api_keys).await
+            }
             ProviderConfig::OpenAI(provider) => {
                 provider.transcribe(request, client, dynamic_api_keys).await
             }
@@ -2016,6 +2022,9 @@ impl ModelProvider {
         use crate::audio::AudioTranslationProvider;
 
         match &self.config {
+            ProviderConfig::Azure(provider) => {
+                provider.translate(request, client, dynamic_api_keys).await
+            }
             ProviderConfig::OpenAI(provider) => {
                 provider.translate(request, client, dynamic_api_keys).await
             }
@@ -2045,6 +2054,11 @@ impl ModelProvider {
         use crate::audio::TextToSpeechProvider;
 
         match &self.config {
+            ProviderConfig::Azure(provider) => {
+                provider
+                    .generate_speech(request, client, dynamic_api_keys)
+                    .await
+            }
             ProviderConfig::OpenAI(provider) => {
                 provider
                     .generate_speech(request, client, dynamic_api_keys)
@@ -2080,6 +2094,11 @@ impl ModelProvider {
         use crate::images::ImageGenerationProvider;
 
         match &self.config {
+            ProviderConfig::Azure(provider) => {
+                provider
+                    .generate_image(request, client, dynamic_api_keys)
+                    .await
+            }
             ProviderConfig::OpenAI(provider) => {
                 provider
                     .generate_image(request, client, dynamic_api_keys)
