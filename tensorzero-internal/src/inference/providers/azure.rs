@@ -9,15 +9,25 @@ use serde_json::{json, Value};
 use tokio::time::Instant;
 use url::Url;
 
+use crate::audio::{
+    AudioOutputFormat, AudioTranscriptionProvider, AudioTranscriptionProviderResponse,
+    AudioTranscriptionRequest, AudioTranslationProvider, AudioTranslationProviderResponse,
+    AudioTranslationRequest, TextToSpeechProvider, TextToSpeechProviderResponse,
+    TextToSpeechRequest,
+};
 use crate::cache::ModelProviderRequest;
+use crate::embeddings::{EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest};
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{DisplayOrDebugGateway, Error, ErrorDetails};
+use crate::images::{
+    ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
+};
 use crate::inference::types::batch::BatchRequestRow;
 use crate::inference::types::batch::PollBatchInferenceResponse;
 use crate::inference::types::{
-    batch::StartBatchProviderInferenceResponse, Latency, ModelInferenceRequest,
-    ModelInferenceRequestJsonMode, PeekableProviderInferenceResponseStream,
-    ProviderInferenceResponse,
+    batch::StartBatchProviderInferenceResponse, current_timestamp, Latency,
+    ModelInferenceRequest, ModelInferenceRequestJsonMode, PeekableProviderInferenceResponseStream,
+    ProviderInferenceResponse, Usage,
 };
 use crate::inference::types::{ContentBlockOutput, ProviderInferenceResponseArgs};
 use crate::model::{build_creds_caching_default, Credential, CredentialLocation, ModelProvider};
@@ -329,6 +339,111 @@ fn get_azure_chat_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error>
     Ok(url)
 }
 
+fn get_azure_embeddings_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+    let mut url = endpoint.clone();
+    url.path_segments_mut()
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Error parsing URL: {e:?}"),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?
+        .push("openai")
+        .push("deployments")
+        .push(deployment_id)
+        .push("embeddings");
+    url.query_pairs_mut()
+        .append_pair("api-version", "2024-10-21");
+    Ok(url)
+}
+
+fn get_azure_transcriptions_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+    let mut url = endpoint.clone();
+    url.path_segments_mut()
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Error parsing URL: {e:?}"),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?
+        .push("openai")
+        .push("deployments")
+        .push(deployment_id)
+        .push("audio")
+        .push("transcriptions");
+    url.query_pairs_mut()
+        .append_pair("api-version", "2024-10-21");
+    Ok(url)
+}
+
+fn get_azure_translations_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+    let mut url = endpoint.clone();
+    url.path_segments_mut()
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Error parsing URL: {e:?}"),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?
+        .push("openai")
+        .push("deployments")
+        .push(deployment_id)
+        .push("audio")
+        .push("translations");
+    url.query_pairs_mut()
+        .append_pair("api-version", "2024-10-21");
+    Ok(url)
+}
+
+fn get_azure_speech_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+    let mut url = endpoint.clone();
+    url.path_segments_mut()
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Error parsing URL: {e:?}"),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?
+        .push("openai")
+        .push("deployments")
+        .push(deployment_id)
+        .push("audio")
+        .push("speech");
+    url.query_pairs_mut()
+        .append_pair("api-version", "2024-10-21");
+    Ok(url)
+}
+
+fn get_azure_images_generations_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+    let mut url = endpoint.clone();
+    url.path_segments_mut()
+        .map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!("Error parsing URL: {e:?}"),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?
+        .push("openai")
+        .push("deployments")
+        .push(deployment_id)
+        .push("images")
+        .push("generations");
+    url.query_pairs_mut()
+        .append_pair("api-version", "2024-10-21");
+    Ok(url)
+}
+
+
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 enum AzureToolChoice<'a> {
@@ -530,6 +645,637 @@ impl<'a> TryFrom<AzureResponseWithMetadata<'a>> for ProviderInferenceResponse {
         ))
     }
 }
+
+// Embedding support
+impl EmbeddingProvider for AzureProvider {
+    async fn embed(
+        &self,
+        request: &EmbeddingRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<EmbeddingProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_body = serde_json::json!({
+            "model": &self.deployment_id,
+            "input": &request.input,
+            "encoding_format": request.encoding_format.as_deref(),
+        });
+        let request_url = get_azure_embeddings_url(&self.endpoint, &self.deployment_id)?;
+        let start_time = Instant::now();
+        let res = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .header("api-key", api_key.expose_secret())
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Azure: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            let response: serde_json::Value =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!("Error parsing JSON response: {}", e),
+                        raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+            
+            let data = response["data"].as_array()
+                .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+                    message: "Missing 'data' field in embedding response".to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: Some(raw_response.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                }))?;
+            
+            let embeddings: Vec<Vec<f32>> = data
+                .iter()
+                .map(|item| {
+                    item["embedding"].as_array()
+                        .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+                            message: "Missing 'embedding' field in response data".to_string(),
+                            raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                            raw_response: Some(raw_response.clone()),
+                            provider_type: PROVIDER_TYPE.to_string(),
+                        }))
+                        .and_then(|arr| {
+                            arr.iter()
+                                .map(|v| v.as_f64()
+                                    .map(|f| f as f32)
+                                    .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+                                        message: "Invalid float value in embedding".to_string(),
+                                        raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                                        raw_response: Some(raw_response.clone()),
+                                        provider_type: PROVIDER_TYPE.to_string(),
+                                    }))
+                                )
+                                .collect::<Result<Vec<f32>, Error>>()
+                        })
+                })
+                .collect::<Result<Vec<Vec<f32>>, Error>>()?;
+            
+            let usage = if let Some(usage_obj) = response.get("usage") {
+                Usage {
+                    input_tokens: usage_obj["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                    output_tokens: usage_obj["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                }
+            } else {
+                Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                }
+            };
+            Ok(EmbeddingProviderResponse::new(
+                embeddings,
+                request.input.clone(),
+                serde_json::to_string(&request_body).unwrap_or_default(),
+                raw_response,
+                usage,
+                latency,
+            ))
+        } else {
+            let status = res.status();
+            let response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+            Err(handle_openai_error(
+                &serde_json::to_string(&request_body).unwrap_or_default(),
+                status,
+                &response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Audio transcription support
+impl AudioTranscriptionProvider for AzureProvider {
+    async fn transcribe(
+        &self,
+        request: &AudioTranscriptionRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<AudioTranscriptionProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_azure_transcriptions_url(&self.endpoint, &self.deployment_id)?;
+        
+        // Create multipart form
+        let mut form = reqwest::multipart::Form::new()
+            .part(
+                "file",
+                reqwest::multipart::Part::bytes(request.file.clone())
+                    .file_name(request.filename.clone()),
+            )
+            .text("model", self.deployment_id.clone());
+
+        if let Some(language) = &request.language {
+            form = form.text("language", language.clone());
+        }
+        if let Some(prompt) = &request.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(temperature) = request.temperature {
+            form = form.text("temperature", temperature.to_string());
+        }
+        if let Some(timestamp_granularities) = &request.timestamp_granularities {
+            for granularity in timestamp_granularities {
+                form = form.text("timestamp_granularities[]", serde_json::to_string(granularity).map_err(|e| {
+                    Error::new(ErrorDetails::Serialization {
+                        message: format!("Error serializing timestamp granularity: {}", e),
+                    })
+                })?);
+            }
+        }
+
+        let start_time = Instant::now();
+        let res = client
+            .post(request_url)
+            .header("api-key", api_key.expose_secret())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Azure: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(format!("Audio transcription request for file: {}", request.filename)),
+                    raw_response: None,
+                })
+            })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(format!("Audio transcription request for file: {}", request.filename)),
+                    raw_response: None,
+                })
+            })?;
+
+            let response: serde_json::Value =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!("Error parsing JSON response: {}", e),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: Some(format!("Audio transcription request for file: {}", request.filename)),
+                        raw_response: Some(raw_response.clone()),
+                    })
+                })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            let usage = Usage {
+                input_tokens: 0, // Azure doesn't provide token usage for audio
+                output_tokens: 0,
+            };
+
+            Ok(AudioTranscriptionProviderResponse {
+                id: request.id,
+                text: response["text"].as_str().unwrap_or("").to_string(),
+                language: response.get("language").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                duration: response.get("duration").and_then(|v| v.as_f64()).map(|f| f as f32),
+                words: response.get("words").and_then(|v| v.as_array()).map(|words| {
+                    words
+                        .iter()
+                        .filter_map(|w| {
+                            Some(crate::audio::WordTimestamp {
+                                word: w["word"].as_str()?.to_string(),
+                                start: w["start"].as_f64()? as f32,
+                                end: w["end"].as_f64()? as f32,
+                            })
+                        })
+                        .collect()
+                }),
+                segments: response.get("segments").and_then(|v| v.as_array()).map(|segments| {
+                    segments
+                        .iter()
+                        .filter_map(|s| {
+                            Some(crate::audio::SegmentTimestamp {
+                                id: s["id"].as_u64()?,
+                                seek: s["seek"].as_u64()?,
+                                start: s["start"].as_f64()? as f32,
+                                end: s["end"].as_f64()? as f32,
+                                text: s["text"].as_str()?.to_string(),
+                                tokens: s["tokens"].as_array()?.iter()
+                                    .filter_map(|t| t.as_u64())
+                                    .collect(),
+                                temperature: s["temperature"].as_f64()? as f32,
+                                avg_logprob: s["avg_logprob"].as_f64()? as f32,
+                                compression_ratio: s["compression_ratio"].as_f64()? as f32,
+                                no_speech_prob: s["no_speech_prob"].as_f64()? as f32,
+                            })
+                        })
+                        .collect()
+                }),
+                created: current_timestamp(),
+                raw_request: format!("Audio transcription request for file: {}", request.filename),
+                raw_response,
+                usage,
+                latency,
+            })
+        } else {
+            let status = res.status();
+            let response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(format!("Audio transcription request for file: {}", request.filename)),
+                    raw_response: None,
+                })
+            })?;
+            Err(handle_openai_error(
+                &format!("Audio transcription request for file: {}", request.filename),
+                status,
+                &response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Audio translation support
+impl AudioTranslationProvider for AzureProvider {
+    async fn translate(
+        &self,
+        request: &AudioTranslationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<AudioTranslationProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_azure_translations_url(&self.endpoint, &self.deployment_id)?;
+        
+        // Create multipart form
+        let mut form = reqwest::multipart::Form::new()
+            .part(
+                "file",
+                reqwest::multipart::Part::bytes(request.file.clone())
+                    .file_name(request.filename.clone()),
+            )
+            .text("model", self.deployment_id.clone());
+
+        if let Some(prompt) = &request.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(temperature) = request.temperature {
+            form = form.text("temperature", temperature.to_string());
+        }
+
+        let start_time = Instant::now();
+        let res = client
+            .post(request_url)
+            .header("api-key", api_key.expose_secret())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Azure: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(format!("Audio translation request for file: {}", request.filename)),
+                    raw_response: None,
+                })
+            })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(format!("Audio translation request for file: {}", request.filename)),
+                    raw_response: None,
+                })
+            })?;
+
+            let response: serde_json::Value =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!("Error parsing JSON response: {}", e),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: Some(format!("Audio translation request for file: {}", request.filename)),
+                        raw_response: Some(raw_response.clone()),
+                    })
+                })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            let usage = Usage {
+                input_tokens: 0, // Azure doesn't provide token usage for audio
+                output_tokens: 0,
+            };
+
+            Ok(AudioTranslationProviderResponse {
+                id: request.id,
+                text: response["text"].as_str().unwrap_or("").to_string(),
+                created: current_timestamp(),
+                raw_request: format!("Audio translation request for file: {}", request.filename),
+                raw_response,
+                usage,
+                latency,
+            })
+        } else {
+            let status = res.status();
+            let response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(format!("Audio translation request for file: {}", request.filename)),
+                    raw_response: None,
+                })
+            })?;
+            Err(handle_openai_error(
+                &format!("Audio translation request for file: {}", request.filename),
+                status,
+                &response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Text-to-speech support
+impl TextToSpeechProvider for AzureProvider {
+    async fn generate_speech(
+        &self,
+        request: &TextToSpeechRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<TextToSpeechProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_azure_speech_url(&self.endpoint, &self.deployment_id)?;
+        
+        let request_body = serde_json::json!({
+            "model": &self.deployment_id,
+            "input": &request.input,
+            "voice": &request.voice,
+            "response_format": request.response_format.as_ref().map(|f| f.as_str()),
+            "speed": request.speed,
+        });
+
+        let start_time = Instant::now();
+        let res = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .header("api-key", api_key.expose_secret())
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Azure: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+
+        if res.status().is_success() {
+            let audio_data = res.bytes().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing audio response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            let usage = Usage {
+                input_tokens: 0, // Azure doesn't provide token usage for TTS
+                output_tokens: 0,
+            };
+
+            Ok(TextToSpeechProviderResponse {
+                id: request.id,
+                audio_data: audio_data.to_vec(),
+                format: request.response_format.clone().unwrap_or(AudioOutputFormat::Mp3),
+                created: current_timestamp(),
+                raw_request: serde_json::to_string(&request_body).unwrap_or_default(),
+                usage,
+                latency,
+            })
+        } else {
+            let status = res.status();
+            let response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+            Err(handle_openai_error(
+                &serde_json::to_string(&request_body).unwrap_or_default(),
+                status,
+                &response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Image generation support
+impl ImageGenerationProvider for AzureProvider {
+    async fn generate_image(
+        &self,
+        request: &ImageGenerationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageGenerationProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_url = get_azure_images_generations_url(&self.endpoint, &self.deployment_id)?;
+        
+        let request_body = serde_json::json!({
+            "prompt": &request.prompt,
+            "n": request.n,
+            "size": request.size.as_ref().map(|s| s.as_str()),
+            "quality": request.quality.as_ref().map(|q| q.as_str()),
+            "response_format": request.response_format.as_ref().map(|f| f.as_str()),
+            "style": request.style.as_ref().map(|s| s.as_str()),
+            "user": request.user.as_ref(),
+        });
+
+        let start_time = Instant::now();
+        let res = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .header("api-key", api_key.expose_secret())
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Azure: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+
+            let response: serde_json::Value =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!("Error parsing JSON response: {}", e),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                        raw_response: Some(raw_response.clone()),
+                    })
+                })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            let usage = Usage {
+                input_tokens: 0, // Azure doesn't provide token usage for images
+                output_tokens: 0,
+            };
+
+            let data_array = response["data"].as_array()
+                .ok_or_else(|| Error::new(ErrorDetails::InferenceServer {
+                    message: "Missing 'data' field in image generation response".to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: Some(raw_response.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                }))?;
+            
+            let data = data_array
+                .iter()
+                .map(|item| {
+                    Ok(crate::images::ImageData {
+                        url: item.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        b64_json: item.get("b64_json").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        revised_prompt: item.get("revised_prompt").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+
+            Ok(ImageGenerationProviderResponse {
+                id: request.id,
+                created: response["created"].as_u64().unwrap_or_else(|| current_timestamp()),
+                data,
+                raw_request: serde_json::to_string(&request_body).unwrap_or_default(),
+                raw_response,
+                usage,
+                latency,
+            })
+        } else {
+            let status = res.status();
+            let response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(serde_json::to_string(&request_body).unwrap_or_default()),
+                    raw_response: None,
+                })
+            })?;
+            Err(handle_openai_error(
+                &serde_json::to_string(&request_body).unwrap_or_default(),
+                status,
+                &response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
