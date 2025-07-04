@@ -154,7 +154,7 @@ fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
     join_url(base_url, "embeddings")
 }
 
-#[expect(dead_code)]
+#[cfg(test)]
 fn get_image_generation_url(base_url: &Url, model_name: &str) -> Result<Url, Error> {
     // Fireworks uses a workflow-based API for image generation
     let path = format!("workflows/accounts/fireworks/models/{model_name}/text_to_image");
@@ -517,7 +517,7 @@ impl EmbeddingProvider for FireworksProvider {
 }
 
 // Image generation support for Fireworks
-#[expect(dead_code)]
+#[cfg(test)]
 #[derive(Debug, Serialize)]
 struct FireworksImageGenerationRequest {
     prompt: String,
@@ -535,7 +535,7 @@ struct FireworksImageGenerationRequest {
     safety_tolerance: Option<u8>,
 }
 
-#[expect(dead_code)]
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct FireworksImageWorkflowResponse {
     request_id: String,
