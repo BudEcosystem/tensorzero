@@ -32,19 +32,25 @@ impl Migration for Migration0031<'_> {
 
     /// Check if the migration has already been applied by checking the enum values
     async fn should_apply(&self) -> Result<bool, Error> {
-        use super::check_column_exists;
+        // First check if we're in a transitional state
+        let batch_request_new_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
+        if batch_request_new_exists {
+            // We're in the middle of migration, should continue applying
+            return Ok(true);
+        }
 
-        // First check if the status column exists
+        // Check if BatchRequest table exists
+        let batch_request_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+        if !batch_request_exists {
+            // Table doesn't exist, can't apply migration
+            return Ok(false);
+        }
+
+        // Check if the status column exists
+        use super::check_column_exists;
         if !check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await? {
-            // If there's no status column, we need to check if status_new exists
-            // which would mean we're in the middle of the migration
-            return check_column_exists(
-                self.clickhouse,
-                "BatchRequest",
-                "status_new",
-                MIGRATION_ID,
-            )
-            .await;
+            // No status column, something is wrong
+            return Ok(false);
         }
 
         let column_type =
@@ -65,104 +71,163 @@ impl Migration for Migration0031<'_> {
     }
 
     async fn apply(&self, _clean_start: bool) -> Result<(), Error> {
-        use super::check_column_exists;
-
         // ClickHouse doesn't support direct enum modification, so we need to:
-        // 1. Add a new column with the extended enum
-        // 2. Copy data from old column to new column
-        // 3. Drop the old column
-        // 4. Rename the new column to the original name
+        // 1. Create a new table with the extended enum
+        // 2. Copy data from the old table to the new table
+        // 3. Drop the old table
+        // 4. Rename the new table to the original name
+        //
+        // This approach avoids ALTER TABLE UPDATE which is not supported in older ClickHouse versions
 
-        // Step 1: Add new status column with extended enum
-        let query = r#"
-            ALTER TABLE BatchRequest
-            ADD COLUMN IF NOT EXISTS status_new Enum(
-                'pending' = 1, 
-                'completed' = 2, 
-                'failed' = 3,
-                'validating' = 4,
-                'in_progress' = 5,
-                'finalizing' = 6,
-                'expired' = 7,
-                'cancelling' = 8,
-                'cancelled' = 9
-            ) DEFAULT 'pending'"#;
+        // Check if we're in a transitional state
+        let batch_request_new_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
+        let batch_request_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
 
-        self.clickhouse
-            .run_query_synchronous(query.to_string(), None)
-            .await?;
+        if !batch_request_new_exists {
+            // Step 1: Create new table with extended enum
+            // First, get the current table structure to preserve all columns
+            let create_new_table_query = r#"
+                CREATE TABLE IF NOT EXISTS BatchRequest_new
+                (
+                    batch_id UUID,
+                    id UUID,
+                    batch_params String,
+                    model_name LowCardinality(String),
+                    model_provider_name LowCardinality(String),
+                    status Enum(
+                        'pending' = 1, 
+                        'completed' = 2, 
+                        'failed' = 3,
+                        'validating' = 4,
+                        'in_progress' = 5,
+                        'finalizing' = 6,
+                        'expired' = 7,
+                        'cancelling' = 8,
+                        'cancelled' = 9
+                    ) DEFAULT 'pending',
+                    errors Map(UUID, String),
+                    timestamp DateTime MATERIALIZED UUIDv7ToDateTime(id),
+                    openai_batch_id Nullable(String),
+                    completion_window String DEFAULT '24h',
+                    input_file_id Nullable(String),
+                    output_file_id Nullable(String),
+                    error_file_id Nullable(String),
+                    created_at Nullable(DateTime),
+                    in_progress_at Nullable(DateTime),
+                    expires_at Nullable(DateTime),
+                    finalizing_at Nullable(DateTime),
+                    completed_at Nullable(DateTime),
+                    failed_at Nullable(DateTime),
+                    expired_at Nullable(DateTime),
+                    cancelling_at Nullable(DateTime),
+                    cancelled_at Nullable(DateTime),
+                    request_counts Nullable(String),
+                    metadata Nullable(String)
+                ) ENGINE = MergeTree()
+                ORDER BY (batch_id, id)"#;
 
-        // Step 2: Copy data from old status column to new one
-        // We need to be careful here because in concurrent scenarios, the column might disappear
-        // between our check and the actual UPDATE. We'll use a try-catch approach.
-        if check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await? {
-            // First, let's try to copy the data
-            let copy_result = self
-                .clickhouse
-                .run_query_synchronous(
-                    "ALTER TABLE BatchRequest UPDATE status_new = status WHERE 1 = 1".to_string(),
-                    None,
-                )
+            self.clickhouse
+                .run_query_synchronous(create_new_table_query.to_string(), None)
+                .await?;
+        }
+
+        // Step 2: Copy data from old table to new table (if old table still exists)
+        if batch_request_exists && batch_request_new_exists {
+            let copy_data_query = r#"
+                INSERT INTO BatchRequest_new 
+                SELECT 
+                    batch_id,
+                    id,
+                    batch_params,
+                    model_name,
+                    model_provider_name,
+                    CAST(status AS Enum(
+                        'pending' = 1, 
+                        'completed' = 2, 
+                        'failed' = 3,
+                        'validating' = 4,
+                        'in_progress' = 5,
+                        'finalizing' = 6,
+                        'expired' = 7,
+                        'cancelling' = 8,
+                        'cancelled' = 9
+                    )) as status,
+                    errors,
+                    openai_batch_id,
+                    completion_window,
+                    input_file_id,
+                    output_file_id,
+                    error_file_id,
+                    created_at,
+                    in_progress_at,
+                    expires_at,
+                    finalizing_at,
+                    completed_at,
+                    failed_at,
+                    expired_at,
+                    cancelling_at,
+                    cancelled_at,
+                    request_counts,
+                    metadata
+                FROM BatchRequest"#;
+
+            let copy_result = self.clickhouse
+                .run_query_synchronous(copy_data_query.to_string(), None)
                 .await;
 
-            // If the copy failed because the column doesn't exist, that's OK - another migration
-            // process might have already handled it
             match copy_result {
                 Ok(_) => {
-                    // Successfully copied, now drop the old column
-                    let query = r#"
-                        ALTER TABLE BatchRequest
-                        DROP COLUMN IF EXISTS status"#;
-
-                    self.clickhouse
-                        .run_query_synchronous(query.to_string(), None)
-                        .await?;
+                    // Successfully copied data
                 }
                 Err(e) => {
-                    // Check if the error is because the column doesn't exist
                     let error_msg = e.to_string();
-                    if error_msg.contains("UNKNOWN_IDENTIFIER")
-                        || error_msg.contains("Missing columns: 'status'")
-                    {
-                        // This is expected in concurrent scenarios - another process already handled it
-                        // Continue with the migration
-                    } else {
-                        // This is an unexpected error, propagate it
+                    // If the table doesn't exist, another process might have already handled it
+                    if !error_msg.contains("UNKNOWN_TABLE") && !error_msg.contains("doesn't exist") {
                         return Err(e);
                     }
                 }
             }
         }
 
-        // Step 4: Rename the new column to the original name
-        // Only rename if status_new exists and status doesn't
-        if check_column_exists(self.clickhouse, "BatchRequest", "status_new", MIGRATION_ID).await?
-            && !check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?
-        {
-            let rename_result = self
-                .clickhouse
-                .run_query_synchronous(
-                    "ALTER TABLE BatchRequest RENAME COLUMN status_new TO status".to_string(),
-                    None,
-                )
+        // Step 3: Drop the old table
+        if batch_request_exists {
+            let drop_old_table_query = "DROP TABLE IF EXISTS BatchRequest";
+            let drop_result = self.clickhouse
+                .run_query_synchronous(drop_old_table_query.to_string(), None)
                 .await;
 
-            // Handle potential concurrent rename attempts
-            match rename_result {
-                Ok(_) => {}
+            match drop_result {
+                Ok(_) => {},
                 Err(e) => {
                     let error_msg = e.to_string();
-                    // If the error is because status_new doesn't exist or status already exists,
-                    // that means another process completed the migration
-                    if error_msg.contains("UNKNOWN_IDENTIFIER")
-                        || error_msg.contains("Missing columns: 'status_new'")
-                        || error_msg.contains("NOT_FOUND_COLUMN_IN_BLOCK")
-                        || error_msg.contains("Cannot find column")
-                        || error_msg.contains("already exists")
-                    {
-                        // This is expected in concurrent scenarios
-                    } else {
-                        // Unexpected error, propagate it
+                    // If the table doesn't exist, that's fine
+                    if !error_msg.contains("UNKNOWN_TABLE") && !error_msg.contains("doesn't exist") {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        // Step 4: Rename new table to original name
+        // Only rename if BatchRequest_new exists and BatchRequest doesn't
+        let batch_request_new_still_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
+        let batch_request_still_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+        
+        if batch_request_new_still_exists && !batch_request_still_exists {
+            let rename_table_query = "RENAME TABLE BatchRequest_new TO BatchRequest";
+            let rename_result = self.clickhouse
+                .run_query_synchronous(rename_table_query.to_string(), None)
+                .await;
+
+            match rename_result {
+                Ok(_) => {},
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    // If the error is because the table doesn't exist or already exists,
+                    // another process completed the migration
+                    if !error_msg.contains("UNKNOWN_TABLE") 
+                        && !error_msg.contains("doesn't exist")
+                        && !error_msg.contains("already exists") {
                         return Err(e);
                     }
                 }
@@ -174,21 +239,20 @@ impl Migration for Migration0031<'_> {
 
     /// Check if the migration has succeeded (i.e. it should not be applied again)
     async fn has_succeeded(&self) -> Result<bool, Error> {
-        use super::check_column_exists;
-
         // The migration is successful if:
-        // 1. There is a 'status' column with the new enum values, OR
-        // 2. We're in a transitional state but another process will complete it
+        // 1. BatchRequest table exists with the new enum values
+        // 2. We're in a transitional state (BatchRequest_new exists)
 
-        // Check if status column exists
-        let status_exists =
-            check_column_exists(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?;
-        let status_new_exists =
-            check_column_exists(self.clickhouse, "BatchRequest", "status_new", MIGRATION_ID)
-                .await?;
+        let batch_request_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+        let batch_request_new_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
 
-        if status_exists && !status_new_exists {
-            // Check if it has the new enum values
+        if batch_request_new_exists {
+            // We're in a transitional state - consider it succeeded since another process will complete it
+            return Ok(true);
+        }
+
+        if batch_request_exists {
+            // Check if the status column has the new enum values
             let column_type =
                 get_column_type(self.clickhouse, "BatchRequest", "status", MIGRATION_ID).await?;
 
@@ -196,9 +260,6 @@ impl Migration for Migration0031<'_> {
             if column_type.contains("validating") || column_type.contains("in_progress") {
                 return Ok(true);
             }
-        } else if status_new_exists {
-            // We're in a transitional state - consider it succeeded since another process will complete it
-            return Ok(true);
         }
 
         // If neither condition is met, check using the original logic
@@ -207,10 +268,71 @@ impl Migration for Migration0031<'_> {
     }
 
     fn rollback_instructions(&self) -> String {
-        "ALTER TABLE BatchRequest ADD COLUMN status_old Enum('pending' = 1, 'completed' = 2, 'failed' = 3) DEFAULT 'pending'
-ALTER TABLE BatchRequest UPDATE status_old = CASE WHEN status IN ('validating', 'in_progress', 'finalizing') THEN 'pending' WHEN status = 'completed' THEN 'completed' WHEN status IN ('failed', 'expired', 'cancelled') THEN 'failed' ELSE status END WHERE 1 = 1
-ALTER TABLE BatchRequest DROP COLUMN status
-ALTER TABLE BatchRequest RENAME COLUMN status_old TO status"
+        "/* Create a table with the original enum */
+CREATE TABLE BatchRequest_old (
+    batch_id UUID,
+    id UUID,
+    batch_params String,
+    model_name LowCardinality(String),
+    model_provider_name LowCardinality(String),
+    status Enum('pending' = 1, 'completed' = 2, 'failed' = 3) DEFAULT 'pending',
+    errors Map(UUID, String),
+    timestamp DateTime MATERIALIZED UUIDv7ToDateTime(id),
+    openai_batch_id Nullable(String),
+    completion_window String DEFAULT '24h',
+    input_file_id Nullable(String),
+    output_file_id Nullable(String),
+    error_file_id Nullable(String),
+    created_at Nullable(DateTime),
+    in_progress_at Nullable(DateTime),
+    expires_at Nullable(DateTime),
+    finalizing_at Nullable(DateTime),
+    completed_at Nullable(DateTime),
+    failed_at Nullable(DateTime),
+    expired_at Nullable(DateTime),
+    cancelling_at Nullable(DateTime),
+    cancelled_at Nullable(DateTime),
+    request_counts Nullable(String),
+    metadata Nullable(String)
+) ENGINE = MergeTree()
+ORDER BY (batch_id, id);
+
+/* Copy data with status mapping */
+INSERT INTO BatchRequest_old 
+SELECT 
+    batch_id,
+    id,
+    batch_params,
+    model_name,
+    model_provider_name,
+    CASE 
+        WHEN status IN ('validating', 'in_progress', 'finalizing') THEN 'pending' 
+        WHEN status = 'completed' THEN 'completed' 
+        WHEN status IN ('failed', 'expired', 'cancelled') THEN 'failed' 
+        ELSE CAST(status AS Enum('pending' = 1, 'completed' = 2, 'failed' = 3))
+    END as status,
+    errors,
+    openai_batch_id,
+    completion_window,
+    input_file_id,
+    output_file_id,
+    error_file_id,
+    created_at,
+    in_progress_at,
+    expires_at,
+    finalizing_at,
+    completed_at,
+    failed_at,
+    expired_at,
+    cancelling_at,
+    cancelled_at,
+    request_counts,
+    metadata
+FROM BatchRequest;
+
+/* Drop and rename */
+DROP TABLE BatchRequest;
+RENAME TABLE BatchRequest_old TO BatchRequest;"
             .to_string()
     }
 }
