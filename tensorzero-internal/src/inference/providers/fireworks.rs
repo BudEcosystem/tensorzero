@@ -2,6 +2,7 @@ use std::{borrow::Cow, sync::OnceLock};
 
 use futures::StreamExt;
 use lazy_static::lazy_static;
+use reqwest::multipart::{Form, Part};
 use reqwest_eventsource::{Event, EventSource, RequestBuilderExt};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -11,15 +12,23 @@ use tokio::time::Instant;
 use url::Url;
 
 use crate::{
+    audio::{
+        AudioTranscriptionProvider, AudioTranscriptionProviderResponse, AudioTranscriptionRequest,
+        AudioTranscriptionResponseFormat, AudioTranslationProvider,
+        AudioTranslationProviderResponse, AudioTranslationRequest,
+    },
     cache::ModelProviderRequest,
+    embeddings::{EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest},
     endpoints::inference::InferenceCredentials,
     error::{DisplayOrDebugGateway, Error, ErrorDetails},
+    images::{ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest},
     inference::types::{
         batch::{BatchRequestRow, PollBatchInferenceResponse, StartBatchProviderInferenceResponse},
-        ContentBlockChunk, ContentBlockOutput, FinishReason, Latency, ModelInferenceRequest,
-        ModelInferenceRequestJsonMode, PeekableProviderInferenceResponseStream,
-        ProviderInferenceResponse, ProviderInferenceResponseArgs, ProviderInferenceResponseChunk,
-        ProviderInferenceResponseStreamInner, Text, TextChunk, Thought, ThoughtChunk,
+        current_timestamp, ContentBlockChunk, ContentBlockOutput, FinishReason, Latency,
+        ModelInferenceRequest, ModelInferenceRequestJsonMode,
+        PeekableProviderInferenceResponseStream, ProviderInferenceResponse,
+        ProviderInferenceResponseArgs, ProviderInferenceResponseChunk,
+        ProviderInferenceResponseStreamInner, Text, TextChunk, Thought, ThoughtChunk, Usage,
     },
     model::{build_creds_caching_default, Credential, CredentialLocation, ModelProvider},
     tool::{ToolCall, ToolCallChunk},
@@ -131,6 +140,33 @@ impl FireworksCredentials {
 
 fn default_api_key_location() -> CredentialLocation {
     CredentialLocation::Env("FIREWORKS_API_KEY".to_string())
+}
+
+fn join_url(base_url: &Url, path: &str) -> Result<Url, Error> {
+    base_url.join(path).map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Failed to join URL: {e}"),
+        })
+    })
+}
+
+fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "embeddings")
+}
+
+#[cfg(test)]
+fn get_image_generation_url(base_url: &Url, model_name: &str) -> Result<Url, Error> {
+    // Fireworks uses a workflow-based API for image generation
+    let path = format!("workflows/accounts/fireworks/models/{model_name}/text_to_image");
+    join_url(base_url, &path)
+}
+
+fn get_audio_transcription_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "audio/transcriptions")
+}
+
+fn get_audio_translation_url(base_url: &Url) -> Result<Url, Error> {
+    join_url(base_url, "audio/translations")
 }
 
 /// Key differences between Fireworks and OpenAI inference:
@@ -334,6 +370,498 @@ impl InferenceProvider for FireworksProvider {
             provider_type: PROVIDER_TYPE.to_string(),
         }
         .into())
+    }
+}
+
+// Embedding support for Fireworks
+#[derive(Debug, Serialize)]
+struct FireworksEmbeddingRequest {
+    input: EmbeddingInput,
+    model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encoding_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FireworksEmbeddingResponse {
+    data: Vec<FireworksEmbeddingData>,
+    usage: OpenAIUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct FireworksEmbeddingData {
+    embedding: Vec<f32>,
+    index: u32,
+}
+
+impl EmbeddingProvider for FireworksProvider {
+    async fn embed(
+        &self,
+        request: &EmbeddingRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<EmbeddingProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_body = FireworksEmbeddingRequest {
+            model: self.model_name.clone(),
+            input: request.input.clone(),
+            encoding_format: request.encoding_format.clone(),
+            dimensions: None, // Can be added based on model support
+        };
+
+        // Serialize request body
+        let raw_request = serde_json::to_string(&request_body).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing Fireworks embedding request: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
+        let request_url = get_embedding_url(&FIREWORKS_API_BASE)?;
+        let start_time = Instant::now();
+
+        let request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret());
+
+        let res = request_builder
+            .body(raw_request.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Fireworks: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
+
+        let status = res.status();
+        if status.is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: FireworksEmbeddingResponse = serde_json::from_str(&raw_response)
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(raw_request.clone()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            // Sort embeddings by index to ensure correct order
+            let mut sorted_data = response.data;
+            sorted_data.sort_by_key(|d| d.index);
+
+            let embeddings: Vec<Vec<f32>> =
+                sorted_data.into_iter().map(|data| data.embedding).collect();
+
+            let usage = Usage::from(response.usage);
+
+            Ok(EmbeddingProviderResponse::new(
+                embeddings,
+                request.input.clone(),
+                raw_request,
+                raw_response,
+                usage,
+                latency,
+            ))
+        } else {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            Err(handle_openai_error(
+                &raw_request,
+                status,
+                &raw_response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Image generation support for Fireworks
+#[cfg(test)]
+#[derive(Debug, Serialize)]
+struct FireworksImageGenerationRequest {
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aspect_ratio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_upsampling: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    safety_tolerance: Option<u8>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Deserialize)]
+struct FireworksImageWorkflowResponse {
+    request_id: String,
+}
+
+impl ImageGenerationProvider for FireworksProvider {
+    async fn generate_image(
+        &self,
+        _request: &ImageGenerationRequest,
+        _client: &reqwest::Client,
+        _dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageGenerationProviderResponse, Error> {
+        // Fireworks uses an async workflow API for image generation that returns a request_id
+        // This is incompatible with the synchronous image generation interface
+        // For now, we'll return an error indicating this isn't supported
+
+        // If you need image generation with Fireworks, consider using their workflow API directly
+        // or implementing a polling mechanism to wait for results
+
+        Err(Error::new(ErrorDetails::InferenceServer {
+            message: format!(
+                "Fireworks image generation uses an async workflow API that returns a request_id. \
+                 This is not currently supported by TensorZero's synchronous image generation interface. \
+                 Model: {}",
+                self.model_name
+            ),
+            provider_type: PROVIDER_TYPE.to_string(),
+            raw_request: None,
+            raw_response: None,
+        }))
+    }
+}
+
+// Audio transcription support for Fireworks
+#[derive(Debug, Deserialize)]
+struct FireworksAudioTranscriptionResponse {
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+}
+
+impl AudioTranscriptionProvider for FireworksProvider {
+    async fn transcribe(
+        &self,
+        request: &AudioTranscriptionRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<AudioTranscriptionProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+
+        // Fireworks uses special audio endpoint URLs for different regions
+        // For now, we'll use the default API base and let Fireworks handle routing
+        let url = get_audio_transcription_url(&FIREWORKS_API_BASE)?;
+
+        let start_time = Instant::now();
+
+        // Create multipart form
+        let mut form = Form::new().text("model", self.model_name.clone()).part(
+            "file",
+            Part::bytes(request.file.clone())
+                .file_name(request.filename.clone())
+                .mime_str("audio/mpeg")
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        status_code: None,
+                        message: format!("Failed to set MIME type: {e}"),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: None,
+                        raw_response: None,
+                    })
+                })?,
+        );
+
+        if let Some(language) = &request.language {
+            form = form.text("language", language.clone());
+        }
+        if let Some(prompt) = &request.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(temperature) = request.temperature {
+            form = form.text("temperature", temperature.to_string());
+        }
+        // Fireworks supports voice activity detection
+        // This could be added as a parameter if needed
+
+        let request_builder = client.post(url).bearer_auth(api_key.expose_secret());
+
+        let res = request_builder.multipart(form).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending audio transcription request to Fireworks: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(format!("Audio file: {}", request.filename)),
+                raw_response: None,
+            })
+        })?;
+
+        let status = res.status();
+        if status.is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            // Parse response based on format
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            // For text format, the response is just the text
+            if matches!(
+                request.response_format,
+                Some(AudioTranscriptionResponseFormat::Text)
+            ) {
+                return Ok(AudioTranscriptionProviderResponse {
+                    id: request.id,
+                    text: raw_response.clone(),
+                    language: None,
+                    duration: None,
+                    words: None,
+                    segments: None,
+                    created: current_timestamp(),
+                    raw_request: format!("Audio file: {}", request.filename),
+                    raw_response,
+                    usage: Usage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                    latency,
+                });
+            }
+
+            // For JSON format, parse the response
+            let response: FireworksAudioTranscriptionResponse = serde_json::from_str(&raw_response)
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!("Error parsing JSON response: {e}"),
+                        raw_request: Some(format!("Audio file: {}", request.filename)),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(AudioTranscriptionProviderResponse {
+                id: request.id,
+                text: response.text,
+                language: response.language,
+                duration: None,
+                words: None,
+                segments: None,
+                created: current_timestamp(),
+                raw_request: format!("Audio file: {}", request.filename),
+                raw_response,
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing error response: {e}"),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            Err(handle_openai_error(
+                &format!("Audio file: {}", request.filename),
+                status,
+                &raw_response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Audio translation support for Fireworks
+impl AudioTranslationProvider for FireworksProvider {
+    async fn translate(
+        &self,
+        request: &AudioTranslationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<AudioTranslationProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_audio_translation_url(&FIREWORKS_API_BASE)?;
+
+        let start_time = Instant::now();
+
+        // Create multipart form
+        let mut form = Form::new().text("model", self.model_name.clone()).part(
+            "file",
+            Part::bytes(request.file.clone())
+                .file_name(request.filename.clone())
+                .mime_str("audio/mpeg")
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        status_code: None,
+                        message: format!("Failed to set MIME type: {e}"),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: None,
+                        raw_response: None,
+                    })
+                })?,
+        );
+
+        if let Some(prompt) = &request.prompt {
+            form = form.text("prompt", prompt.clone());
+        }
+        if let Some(response_format) = &request.response_format {
+            form = form.text("response_format", response_format.as_str());
+        }
+        if let Some(temperature) = request.temperature {
+            form = form.text("temperature", temperature.to_string());
+        }
+
+        let request_builder = client.post(url).bearer_auth(api_key.expose_secret());
+
+        let res = request_builder.multipart(form).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error sending audio translation request to Fireworks: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(format!("Audio file: {}", request.filename)),
+                raw_response: None,
+            })
+        })?;
+
+        let status = res.status();
+        if status.is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            // Parse response based on format
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            // For text format, the response is just the text
+            if matches!(
+                request.response_format,
+                Some(AudioTranscriptionResponseFormat::Text)
+            ) {
+                return Ok(AudioTranslationProviderResponse {
+                    id: request.id,
+                    text: raw_response.clone(),
+                    created: current_timestamp(),
+                    raw_request: format!("Audio file: {}", request.filename),
+                    raw_response,
+                    usage: Usage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                    latency,
+                });
+            }
+
+            // For JSON format, parse the response
+            // Reuse the same response structure as transcription
+            let response: FireworksAudioTranscriptionResponse = serde_json::from_str(&raw_response)
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!("Error parsing JSON response: {e}"),
+                        raw_request: Some(format!("Audio file: {}", request.filename)),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(AudioTranslationProviderResponse {
+                id: request.id,
+                text: response.text,
+                created: current_timestamp(),
+                raw_request: format!("Audio file: {}", request.filename),
+                raw_response,
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!("Error parsing error response: {e}"),
+                    raw_request: Some(format!("Audio file: {}", request.filename)),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            Err(handle_openai_error(
+                &format!("Audio file: {}", request.filename),
+                status,
+                &raw_response,
+                PROVIDER_TYPE,
+            ))
+        }
     }
 }
 
@@ -1463,5 +1991,173 @@ mod tests {
         } else {
             panic!("Expected a tool call chunk");
         }
+    }
+
+    #[test]
+    fn test_fireworks_embedding_request_serialization() {
+        use crate::embeddings::EmbeddingInput;
+
+        // Test single input
+        let request = FireworksEmbeddingRequest {
+            model: "nomic-ai/nomic-embed-text-v1.5".to_string(),
+            input: EmbeddingInput::Single("test input".to_string()),
+            encoding_format: None,
+            dimensions: None,
+        };
+
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["model"], "nomic-ai/nomic-embed-text-v1.5");
+        assert_eq!(serialized["input"], "test input");
+        assert!(!serialized
+            .as_object()
+            .unwrap()
+            .contains_key("encoding_format"));
+        assert!(!serialized.as_object().unwrap().contains_key("dimensions"));
+
+        // Test batch input
+        let request = FireworksEmbeddingRequest {
+            model: "nomic-ai/nomic-embed-text-v1.5".to_string(),
+            input: EmbeddingInput::Batch(vec!["input1".to_string(), "input2".to_string()]),
+            encoding_format: Some("base64".to_string()),
+            dimensions: Some(512),
+        };
+
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["model"], "nomic-ai/nomic-embed-text-v1.5");
+        assert_eq!(serialized["input"], serde_json::json!(["input1", "input2"]));
+        assert_eq!(serialized["encoding_format"], "base64");
+        assert_eq!(serialized["dimensions"], 512);
+    }
+
+    #[test]
+    fn test_fireworks_embedding_response_deserialization() {
+        let response_json = r#"{
+            "data": [
+                {"embedding": [0.1, 0.2, 0.3], "index": 0},
+                {"embedding": [0.4, 0.5, 0.6], "index": 1}
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 0,
+                "total_tokens": 10
+            }
+        }"#;
+
+        let response: FireworksEmbeddingResponse = serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+        assert_eq!(response.data[0].index, 0);
+        assert_eq!(response.data[1].embedding, vec![0.4, 0.5, 0.6]);
+        assert_eq!(response.data[1].index, 1);
+        assert_eq!(response.usage.prompt_tokens, 10);
+        assert_eq!(response.usage.total_tokens, 10);
+    }
+
+    #[test]
+    fn test_fireworks_image_generation_request_serialization() {
+        let request = FireworksImageGenerationRequest {
+            prompt: "A beautiful sunset".to_string(),
+            input_image: None,
+            seed: Some(42),
+            aspect_ratio: Some("16:9".to_string()),
+            output_format: Some("png".to_string()),
+            prompt_upsampling: Some(true),
+            safety_tolerance: Some(2),
+        };
+
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["prompt"], "A beautiful sunset");
+        assert_eq!(serialized["seed"], 42);
+        assert_eq!(serialized["aspect_ratio"], "16:9");
+        assert_eq!(serialized["output_format"], "png");
+        assert_eq!(serialized["prompt_upsampling"], true);
+        assert_eq!(serialized["safety_tolerance"], 2);
+        assert!(serialized.get("input_image").is_none());
+    }
+
+    #[test]
+    fn test_fireworks_image_generation_workflow_response_deserialization() {
+        let response_json = r#"{
+            "request_id": "req_123456789"
+        }"#;
+
+        let response: FireworksImageWorkflowResponse = serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.request_id, "req_123456789");
+    }
+
+    #[test]
+    fn test_fireworks_audio_transcription_response_deserialization() {
+        // Test JSON format response
+        let response_json = r#"{
+            "text": "This is the transcribed text",
+            "language": "en"
+        }"#;
+
+        let response: FireworksAudioTranscriptionResponse =
+            serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.text, "This is the transcribed text");
+        assert_eq!(response.language, Some("en".to_string()));
+
+        // Test response without language
+        let response_json = r#"{
+            "text": "This is the transcribed text"
+        }"#;
+
+        let response: FireworksAudioTranscriptionResponse =
+            serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.text, "This is the transcribed text");
+        assert_eq!(response.language, None);
+    }
+
+    #[test]
+    fn test_fireworks_audio_translation_response_deserialization() {
+        // Test JSON format response
+        let response_json = r#"{
+            "text": "This is the translated text",
+            "language": "en"
+        }"#;
+
+        let response: FireworksAudioTranscriptionResponse =
+            serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.text, "This is the translated text");
+        assert_eq!(response.language, Some("en".to_string()));
+
+        // Test response without language
+        let response_json = r#"{
+            "text": "This is the translated text"
+        }"#;
+
+        let response: FireworksAudioTranscriptionResponse =
+            serde_json::from_str(response_json).unwrap();
+        assert_eq!(response.text, "This is the translated text");
+        assert_eq!(response.language, None);
+    }
+
+    #[test]
+    fn test_url_helpers() {
+        // Test embedding URL
+        let url = get_embedding_url(&FIREWORKS_API_BASE).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://api.fireworks.ai/inference/v1/embeddings"
+        );
+
+        // Test image generation URL
+        let url = get_image_generation_url(&FIREWORKS_API_BASE, "stable-diffusion-xl").unwrap();
+        assert_eq!(url.as_str(), "https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models/stable-diffusion-xl/text_to_image");
+
+        // Test audio transcription URL
+        let url = get_audio_transcription_url(&FIREWORKS_API_BASE).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://api.fireworks.ai/inference/v1/audio/transcriptions"
+        );
+
+        // Test audio translation URL
+        let url = get_audio_translation_url(&FIREWORKS_API_BASE).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://api.fireworks.ai/inference/v1/audio/translations"
+        );
     }
 }
