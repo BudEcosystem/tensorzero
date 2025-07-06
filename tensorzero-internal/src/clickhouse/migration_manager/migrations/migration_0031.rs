@@ -33,14 +33,16 @@ impl Migration for Migration0031<'_> {
     /// Check if the migration has already been applied by checking the enum values
     async fn should_apply(&self) -> Result<bool, Error> {
         // First check if we're in a transitional state
-        let batch_request_new_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
+        let batch_request_new_exists =
+            check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
         if batch_request_new_exists {
             // We're in the middle of migration, should continue applying
             return Ok(true);
         }
 
         // Check if BatchRequest table exists
-        let batch_request_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+        let batch_request_exists =
+            check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
         if !batch_request_exists {
             // Table doesn't exist, can't apply migration
             return Ok(false);
@@ -80,8 +82,10 @@ impl Migration for Migration0031<'_> {
         // This approach avoids ALTER TABLE UPDATE which is not supported in older ClickHouse versions
 
         // Check if we're in a transitional state
-        let batch_request_new_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
-        let batch_request_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+        let batch_request_new_exists =
+            check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
+        let batch_request_exists =
+            check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
 
         if !batch_request_new_exists {
             // Step 1: Create new table with extended enum
@@ -171,7 +175,8 @@ impl Migration for Migration0031<'_> {
                     metadata
                 FROM BatchRequest"#;
 
-            let copy_result = self.clickhouse
+            let copy_result = self
+                .clickhouse
                 .run_query_synchronous(copy_data_query.to_string(), None)
                 .await;
 
@@ -182,7 +187,8 @@ impl Migration for Migration0031<'_> {
                 Err(e) => {
                     let error_msg = e.to_string();
                     // If the table doesn't exist, another process might have already handled it
-                    if !error_msg.contains("UNKNOWN_TABLE") && !error_msg.contains("doesn't exist") {
+                    if !error_msg.contains("UNKNOWN_TABLE") && !error_msg.contains("doesn't exist")
+                    {
                         return Err(e);
                     }
                 }
@@ -192,16 +198,18 @@ impl Migration for Migration0031<'_> {
         // Step 3: Drop the old table
         if batch_request_exists {
             let drop_old_table_query = "DROP TABLE IF EXISTS BatchRequest";
-            let drop_result = self.clickhouse
+            let drop_result = self
+                .clickhouse
                 .run_query_synchronous(drop_old_table_query.to_string(), None)
                 .await;
 
             match drop_result {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     let error_msg = e.to_string();
                     // If the table doesn't exist, that's fine
-                    if !error_msg.contains("UNKNOWN_TABLE") && !error_msg.contains("doesn't exist") {
+                    if !error_msg.contains("UNKNOWN_TABLE") && !error_msg.contains("doesn't exist")
+                    {
                         return Err(e);
                     }
                 }
@@ -210,24 +218,28 @@ impl Migration for Migration0031<'_> {
 
         // Step 4: Rename new table to original name
         // Only rename if BatchRequest_new exists and BatchRequest doesn't
-        let batch_request_new_still_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
-        let batch_request_still_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
-        
+        let batch_request_new_still_exists =
+            check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
+        let batch_request_still_exists =
+            check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+
         if batch_request_new_still_exists && !batch_request_still_exists {
             let rename_table_query = "RENAME TABLE BatchRequest_new TO BatchRequest";
-            let rename_result = self.clickhouse
+            let rename_result = self
+                .clickhouse
                 .run_query_synchronous(rename_table_query.to_string(), None)
                 .await;
 
             match rename_result {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     let error_msg = e.to_string();
                     // If the error is because the table doesn't exist or already exists,
                     // another process completed the migration
-                    if !error_msg.contains("UNKNOWN_TABLE") 
+                    if !error_msg.contains("UNKNOWN_TABLE")
                         && !error_msg.contains("doesn't exist")
-                        && !error_msg.contains("already exists") {
+                        && !error_msg.contains("already exists")
+                    {
                         return Err(e);
                     }
                 }
@@ -243,8 +255,10 @@ impl Migration for Migration0031<'_> {
         // 1. BatchRequest table exists with the new enum values
         // 2. We're in a transitional state (BatchRequest_new exists)
 
-        let batch_request_exists = check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
-        let batch_request_new_exists = check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
+        let batch_request_exists =
+            check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+        let batch_request_new_exists =
+            check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
 
         if batch_request_new_exists {
             // We're in a transitional state - consider it succeeded since another process will complete it
