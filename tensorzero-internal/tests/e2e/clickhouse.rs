@@ -630,8 +630,17 @@ async fn test_clickhouse_migration_manager() {
                 assert!(!clean_start);
             }
             let name = migrations[i].name();
-            assert!(!logs_contain(&format!("Applying migration: {name}")));
-            assert!(!logs_contain(&format!("Migration succeeded: {name}")));
+            // Migration 0029 depends on 0023 which is banned, so it won't apply
+            if name != "Migration0029" {
+                assert!(
+                    !logs_contain(&format!("Applying migration: {name}")),
+                    "Migration {name} should not have been applied in run_all because it was already applied"
+                );
+                assert!(
+                    !logs_contain(&format!("Migration succeeded: {name}")),
+                    "Migration {name} should not have succeeded in run_all because it wasn't applied"
+                );
+            }
         }
 
         assert!(!logs_contain("Failed to apply migration"));
