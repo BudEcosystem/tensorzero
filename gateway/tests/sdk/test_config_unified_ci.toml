@@ -187,3 +187,49 @@ endpoints = ["chat"]
 [models."claude-instant-1.2".providers.dummy]
 type = "dummy"
 model_name = "test"
+
+# === Fireworks Models - Universal OpenAI SDK Compatibility ===
+# These Fireworks models also work with OpenAI SDK through /v1/chat/completions
+# Demonstrating provider-specific parameter support via extra_body
+
+[models."fireworks-llama-v3p1-8b-instruct"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."fireworks-llama-v3p1-8b-instruct".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."fireworks-llama-v3p1-70b-instruct"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."fireworks-llama-v3p1-70b-instruct".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."fireworks-llama-v3p2-3b-instruct"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."fireworks-llama-v3p2-3b-instruct".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+# Reasoning model for testing reasoning_effort parameter
+[models."fireworks-deepseek-r1"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."fireworks-deepseek-r1".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+# Embedding model
+[models."fireworks-nomic-embed-text-v1_5"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."fireworks-nomic-embed-text-v1_5".providers.dummy]
+type = "dummy"
+model_name = "test"
