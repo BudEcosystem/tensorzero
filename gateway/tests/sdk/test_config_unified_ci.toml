@@ -287,4 +287,4 @@ endpoints = ["chat"]
 
 [models."gpt-35-turbo-azure-dynamic".providers.dummy-dynamic]
 type = "dummy"
-model_name = "test" < /dev/null
+model_name = "test"
