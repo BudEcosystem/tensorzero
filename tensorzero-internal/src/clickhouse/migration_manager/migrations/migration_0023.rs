@@ -59,6 +59,13 @@ impl Migration for Migration0023<'_> {
     }
 
     async fn apply(&self, _clean_start: bool) -> Result<(), Error> {
+        // This migration is BANNED and should not be applied
+        return Err(Error::new(ErrorDetails::ClickHouseMigration {
+            id: "0023".to_string(),
+            message: "Migration 0023 is BANNED and should not be applied. Use migration 0028 instead.".to_string(),
+        }));
+        
+        #[allow(unreachable_code)]
         self.clickhouse
             .run_query_synchronous(
                 r#"CREATE TABLE IF NOT EXISTS StaticEvaluationHumanFeedback (
