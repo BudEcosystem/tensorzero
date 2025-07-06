@@ -9,13 +9,13 @@ use serde_json::{json, Value};
 use tokio::time::Instant;
 use url::Url;
 
-use crate::cache::ModelProviderRequest;
 use crate::audio::{
-    AudioTranscriptionProvider, AudioTranscriptionProviderResponse, AudioTranscriptionRequest,
-    AudioTranscriptionResponseFormat, AudioTranslationProvider, AudioTranslationProviderResponse,
-    AudioTranslationRequest, TextToSpeechProvider, TextToSpeechProviderResponse, TextToSpeechRequest,
-    AudioOutputFormat,
+    AudioOutputFormat, AudioTranscriptionProvider, AudioTranscriptionProviderResponse,
+    AudioTranscriptionRequest, AudioTranscriptionResponseFormat, AudioTranslationProvider, 
+    AudioTranslationProviderResponse, AudioTranslationRequest, TextToSpeechProvider, 
+    TextToSpeechProviderResponse, TextToSpeechRequest,
 };
+use crate::cache::ModelProviderRequest;
 use crate::embeddings::{EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest};
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{DisplayOrDebugGateway, Error, ErrorDetails};
@@ -376,7 +376,7 @@ impl EmbeddingProvider for AzureProvider {
     ) -> Result<EmbeddingProviderResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
         let request_body = AzureEmbeddingRequest::new(&request.input, request.encoding_format.as_deref());
-        let request_url = get_azure_embedding_url(&self.endpoint, &self.deployment_id)?;
+        let request_url = get_azure_embeddings_url(&self.endpoint, &self.deployment_id)?;
         let start_time = Instant::now();
         
         let res = client
@@ -485,7 +485,7 @@ impl AudioTranscriptionProvider for AzureProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<AudioTranscriptionProviderResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = get_azure_audio_transcription_url(&self.endpoint, &self.deployment_id)?;
+        let url = get_azure_transcriptions_url(&self.endpoint, &self.deployment_id)?;
         let start_time = Instant::now();
 
         // Create multipart form
@@ -647,7 +647,7 @@ impl AudioTranslationProvider for AzureProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<AudioTranslationProviderResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = get_azure_audio_translation_url(&self.endpoint, &self.deployment_id)?;
+        let url = get_azure_translations_url(&self.endpoint, &self.deployment_id)?;
         let start_time = Instant::now();
 
         // Create multipart form
@@ -794,7 +794,7 @@ impl TextToSpeechProvider for AzureProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<TextToSpeechProviderResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = get_azure_audio_speech_url(&self.endpoint, &self.deployment_id)?;
+        let url = get_azure_speech_url(&self.endpoint, &self.deployment_id)?;
         let start_time = Instant::now();
 
         // Prepare request body
@@ -914,7 +914,7 @@ impl ImageGenerationProvider for AzureProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<ImageGenerationProviderResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let url = get_azure_image_generation_url(&self.endpoint, &self.deployment_id)?;
+        let url = get_azure_images_generations_url(&self.endpoint, &self.deployment_id)?;
         let start_time = Instant::now();
 
         // Prepare request body
@@ -1070,7 +1070,7 @@ fn get_azure_chat_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error>
     Ok(url)
 }
 
-fn get_azure_embedding_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+fn get_azure_embeddings_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
     let mut url = endpoint.clone();
     url.path_segments_mut()
         .map_err(|e| {
@@ -1090,7 +1090,7 @@ fn get_azure_embedding_url(endpoint: &Url, deployment_id: &str) -> Result<Url, E
     Ok(url)
 }
 
-fn get_azure_audio_transcription_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+fn get_azure_transcriptions_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
     let mut url = endpoint.clone();
     url.path_segments_mut()
         .map_err(|e| {
@@ -1111,7 +1111,7 @@ fn get_azure_audio_transcription_url(endpoint: &Url, deployment_id: &str) -> Res
     Ok(url)
 }
 
-fn get_azure_audio_translation_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+fn get_azure_translations_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
     let mut url = endpoint.clone();
     url.path_segments_mut()
         .map_err(|e| {
@@ -1132,7 +1132,7 @@ fn get_azure_audio_translation_url(endpoint: &Url, deployment_id: &str) -> Resul
     Ok(url)
 }
 
-fn get_azure_audio_speech_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+fn get_azure_speech_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
     let mut url = endpoint.clone();
     url.path_segments_mut()
         .map_err(|e| {
@@ -1153,7 +1153,7 @@ fn get_azure_audio_speech_url(endpoint: &Url, deployment_id: &str) -> Result<Url
     Ok(url)
 }
 
-fn get_azure_image_generation_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
+fn get_azure_images_generations_url(endpoint: &Url, deployment_id: &str) -> Result<Url, Error> {
     let mut url = endpoint.clone();
     url.path_segments_mut()
         .map_err(|e| {
@@ -1375,6 +1375,7 @@ impl<'a> TryFrom<AzureResponseWithMetadata<'a>> for ProviderInferenceResponse {
         ))
     }
 }
+
 
 #[cfg(test)]
 mod tests {

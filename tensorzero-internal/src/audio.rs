@@ -257,6 +257,19 @@ impl AudioTranscriptionResponseFormat {
     }
 }
 
+impl AudioOutputFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AudioOutputFormat::Mp3 => "mp3",
+            AudioOutputFormat::Opus => "opus",
+            AudioOutputFormat::Aac => "aac",
+            AudioOutputFormat::Flac => "flac",
+            AudioOutputFormat::Wav => "wav",
+            AudioOutputFormat::Pcm => "pcm",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
