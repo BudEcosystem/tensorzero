@@ -15,7 +15,7 @@ use crate::{
     endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails},
     inference::{
-        providers::{openai::OpenAIProvider, together::TogetherProvider, vllm::VLLMProvider},
+        providers::{azure::AzureProvider, openai::OpenAIProvider, together::TogetherProvider, vllm::VLLMProvider},
         types::{
             current_timestamp, Latency, ModelInferenceResponseWithMetadata, RequestMessage, Role,
             Usage,
@@ -363,6 +363,7 @@ pub trait EmbeddingProvider {
 
 #[derive(Debug)]
 pub enum EmbeddingProviderConfig {
+    Azure(AzureProvider),
     OpenAI(OpenAIProvider),
     VLLM(VLLMProvider),
     Together(TogetherProvider),
@@ -383,6 +384,7 @@ impl UninitializedEmbeddingProviderConfig {
     ) -> Result<EmbeddingProviderConfig, Error> {
         let provider_config = self.config.load(provider_types)?;
         Ok(match provider_config {
+            ProviderConfig::Azure(provider) => EmbeddingProviderConfig::Azure(provider),
             ProviderConfig::OpenAI(provider) => EmbeddingProviderConfig::OpenAI(provider),
             ProviderConfig::VLLM(provider) => EmbeddingProviderConfig::VLLM(provider),
             ProviderConfig::Together(provider) => EmbeddingProviderConfig::Together(provider),
@@ -407,6 +409,9 @@ impl EmbeddingProvider for EmbeddingProviderConfig {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<EmbeddingProviderResponse, Error> {
         match self {
+            EmbeddingProviderConfig::Azure(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
             EmbeddingProviderConfig::OpenAI(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }

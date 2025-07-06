@@ -233,3 +233,58 @@ endpoints = ["embedding"]
 [models."fireworks-nomic-embed-text-v1_5".providers.dummy]
 type = "dummy"
 model_name = "test"
+
+# === Azure Models - Universal OpenAI SDK Compatibility ===
+# These Azure models work with both Azure SDK and OpenAI SDK
+# Demonstrating Azure deployment name handling and API version support
+
+[models."gpt-35-turbo-azure"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."gpt-35-turbo-azure".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."gpt-4-azure"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."gpt-4-azure".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."gpt-4o-azure"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."gpt-4o-azure".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."text-embedding-ada-002-azure"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."text-embedding-ada-002-azure".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+# Azure model with extra configuration
+[models."gpt-35-turbo-azure-extra"]
+routing = ["dummy-extra"]
+endpoints = ["chat"]
+
+[models."gpt-35-turbo-azure-extra".providers.dummy-extra]
+type = "dummy"
+model_name = "test"
+extra_body = { dataSources = [], logprobs = true }
+
+# Dynamic credentials test
+[models."gpt-35-turbo-azure-dynamic"]
+routing = ["dummy-dynamic"]
+endpoints = ["chat"]
+
+[models."gpt-35-turbo-azure-dynamic".providers.dummy-dynamic]
+type = "dummy"
+model_name = "test" < /dev/null
