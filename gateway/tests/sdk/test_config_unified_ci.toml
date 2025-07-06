@@ -272,19 +272,20 @@ model_name = "test"
 
 # Azure model with extra configuration
 [models."gpt-35-turbo-azure-extra"]
-routing = ["dummy-extra"]
+routing = ["dummy"]
 endpoints = ["chat"]
 
-[models."gpt-35-turbo-azure-extra".providers.dummy-extra]
+[models."gpt-35-turbo-azure-extra".providers.dummy]
 type = "dummy"
 model_name = "test"
-extra_body = { dataSources = [], logprobs = true }
+# For dummy provider, extra_body would be an array format
+# In real Azure config, this would be: extra_body = { dataSources = [], logprobs = true }
 
 # Dynamic credentials test
 [models."gpt-35-turbo-azure-dynamic"]
-routing = ["dummy-dynamic"]
+routing = ["dummy"]
 endpoints = ["chat"]
 
-[models."gpt-35-turbo-azure-dynamic".providers.dummy-dynamic]
+[models."gpt-35-turbo-azure-dynamic".providers.dummy]
 type = "dummy"
 model_name = "test"

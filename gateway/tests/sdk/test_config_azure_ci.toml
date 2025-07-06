@@ -43,10 +43,10 @@ model_name = "text-embedding-ada-002-azure"
 
 # Extra body configuration test
 [models."gpt-35-turbo-azure-extra"]
-routing = ["dummy-extra"]
+routing = ["dummy"]
 endpoints = ["chat"]
 
-[models."gpt-35-turbo-azure-extra".providers.dummy-extra]
+[models."gpt-35-turbo-azure-extra".providers.dummy]
 type = "dummy"
 model_name = "gpt-35-turbo-azure-extra"
 # For dummy provider, extra_body needs to be an array format
@@ -54,35 +54,35 @@ model_name = "gpt-35-turbo-azure-extra"
 
 # Dynamic credentials test
 [models."gpt-35-turbo-azure-dynamic"]
-routing = ["dummy-dynamic"]
+routing = ["dummy"]
 endpoints = ["chat"]
 
-[models."gpt-35-turbo-azure-dynamic".providers.dummy-dynamic]
+[models."gpt-35-turbo-azure-dynamic".providers.dummy]
 type = "dummy"
 model_name = "gpt-35-turbo-azure-dynamic"
 
 # Azure Audio Models (Dummy for CI)
 [models."whisper-1-azure"]
-routing = ["dummy-audio"]
+routing = ["dummy"]
 endpoints = ["audio_transcription", "audio_translation"]
 
-[models."whisper-1-azure".providers.dummy-audio]
+[models."whisper-1-azure".providers.dummy]
 type = "dummy"
 model_name = "whisper-1-azure"
 
 [models."tts-1-azure"]
-routing = ["dummy-tts"]
+routing = ["dummy"]
 endpoints = ["text_to_speech"]
 
-[models."tts-1-azure".providers.dummy-tts]
+[models."tts-1-azure".providers.dummy]
 type = "dummy"
 model_name = "tts-1-azure"
 
 # Azure Image Generation Models (Dummy for CI)
 [models."dall-e-3-azure"]
-routing = ["dummy-image"]
+routing = ["dummy"]
 endpoints = ["image_generation"]
 
-[models."dall-e-3-azure".providers.dummy-image]
+[models."dall-e-3-azure".providers.dummy]
 type = "dummy"
 model_name = "dall-e-3-azure"
