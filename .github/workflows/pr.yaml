@@ -182,7 +182,6 @@ jobs:
         with:
           cache-provider: "buildjet"
           save-if: ${{ github.event_name == 'merge_group' }}
-          key: ${{ github.sha }}-migration-cache-bust  # Bust cache for migration fixes
       - run: df -h
       # ClickHouse intermittently runs out of disk space on the `ubuntu-latest` runner
       # I'm using the commands from https://carlosbecker.com/posts/github-actions-disk-space/ to try to get more disk space
@@ -197,14 +196,11 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry
             ~/.cargo/git
-          key: cargo-tools-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-migration-bust-${{ github.sha }}
+          key: cargo-tools-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             cargo-tools-${{ runner.os }}-
 
       - run: df -h
-      
-      - name: Cargo clean to ensure fresh build
-        run: cargo clean
       
       - name: Install system dependencies
         run: |
