@@ -33,6 +33,7 @@ use migrations::migration_0031::Migration0031;
 
 /// This must match the number of migrations returned by `make_all_migrations` - the tests
 /// will panic if they don't match.
+/// Note: Updated for migration_0031 batch API support
 pub const NUM_MIGRATIONS: usize = 31;
 
 /// Constructs (but does not run) a vector of all our database migrations.
