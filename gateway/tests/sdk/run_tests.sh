@@ -23,7 +23,7 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --provider PROVIDER   Provider to test (openai, anthropic, all, universal) [default: all]"
+    echo "  --provider PROVIDER   Provider to test (openai, anthropic, fireworks, all, universal) [default: all]"
     echo "  --mode MODE          Test mode (ci, full) [default: ci]"
     echo "  --port PORT          Gateway port [default: 3001]"
     echo "  --compare            Run comparison tests (full mode only)"
@@ -34,6 +34,7 @@ usage() {
     echo "  $0                           # Run all CI tests"
     echo "  $0 --provider openai --mode full  # Run full OpenAI tests"
     echo "  $0 --provider anthropic           # Run Anthropic CI tests"
+    echo "  $0 --provider fireworks           # Run Fireworks CI tests"
     echo "  $0 --provider universal           # Run universal SDK compatibility tests"
     echo "  $0 --demo                         # Run interactive SDK architecture demo"
     exit 0
@@ -75,8 +76,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate inputs
-if [[ ! "$PROVIDER" =~ ^(openai|anthropic|all|universal)$ ]]; then
-    echo -e "${RED}Error: Invalid provider '$PROVIDER'. Must be openai, anthropic, all, or universal.${NC}"
+if [[ ! "$PROVIDER" =~ ^(openai|anthropic|fireworks|all|universal)$ ]]; then
+    echo -e "${RED}Error: Invalid provider '$PROVIDER'. Must be openai, anthropic, fireworks, all, or universal.${NC}"
     exit 1
 fi
 
@@ -147,6 +148,11 @@ else
         echo -e "${RED}Error: ANTHROPIC_API_KEY is not set!${NC}"
         exit 1
     fi
+    
+    if [[ "$PROVIDER" == "fireworks" || "$PROVIDER" == "all" ]] && [ -z "$FIREWORKS_API_KEY" ]; then
+        echo -e "${RED}Error: FIREWORKS_API_KEY is not set!${NC}"
+        exit 1
+    fi
 fi
 
 # Function to check gateway with specific config
@@ -190,26 +196,39 @@ run_provider_tests() {
     local test_dir="${provider}_tests/"
     local test_pattern=""
     
-    if [ "$MODE" == "ci" ]; then
-        test_pattern="test_ci_*.py"
-    else
-        test_pattern="test_*.py"
-        # Exclude CI tests in full mode
-        test_pattern="test_*.py and not test_ci_*.py"
-    fi
-    
-    # Run pytest
-    echo -e "${YELLOW}Running pytest for $provider...${NC}"
-    if [ "$MODE" == "ci" ]; then
-        pytest -v "${test_dir}" -k "test_ci" -x
-    else
-        if [ "$COMPARE" == true ] && [ "$provider" == "openai" ]; then
-            # Run all tests including comparison
-            pytest -v "${test_dir}" -k "not test_ci"
+    # Special handling for Fireworks provider
+    if [ "$provider" == "fireworks" ]; then
+        echo -e "${YELLOW}Running Fireworks parameter tests...${NC}"
+        if [ "$MODE" == "ci" ]; then
+            python fireworks_tests/test_ci_fireworks_params.py
         else
-            # Run tests excluding comparison
-            pytest -v "${test_dir}" -k "not test_ci and not compare_with_openai"
+            python fireworks_tests/test_fireworks_params.py
         fi
+        return $?
+    else
+        # Standard pytest for other providers
+        if [ "$MODE" == "ci" ]; then
+            test_pattern="test_ci_*.py"
+        else
+            test_pattern="test_*.py"
+            # Exclude CI tests in full mode
+            test_pattern="test_*.py and not test_ci_*.py"
+        fi
+        
+        # Run pytest
+        echo -e "${YELLOW}Running pytest for $provider...${NC}"
+        if [ "$MODE" == "ci" ]; then
+            pytest -v "${test_dir}" -k "test_ci" -x
+        else
+            if [ "$COMPARE" == true ] && [ "$provider" == "openai" ]; then
+                # Run all tests including comparison
+                pytest -v "${test_dir}" -k "not test_ci"
+            else
+                # Run tests excluding comparison
+                pytest -v "${test_dir}" -k "not test_ci and not compare_with_openai"
+            fi
+        fi
+        return $?
     fi
 }
 
@@ -261,7 +280,7 @@ if [ "$PROVIDER" == "universal" ]; then
     fi
 elif [ "$PROVIDER" == "all" ]; then
     # Test all providers
-    for p in openai anthropic; do
+    for p in openai anthropic fireworks; do
         echo -e "\n${BLUE}================================${NC}"
         echo -e "${BLUE}Testing provider: $p${NC}"
         echo -e "${BLUE}================================${NC}"
