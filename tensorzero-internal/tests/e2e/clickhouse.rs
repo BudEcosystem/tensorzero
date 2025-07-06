@@ -455,8 +455,9 @@ async fn test_rollback_helper(migration_num: usize, logs_contain: fn(&str) -> bo
         migration_manager::run_migration(migration.as_ref(), false)
             .await
             .unwrap();
-        // Migration0023 is banned and Migration0029 only runs if views created by Migration0023 exist
-        let should_succeed = migration.name() != "Migration0023" && migration.name() != "Migration0029";
+        // Migration0029 only runs if `StaticEvaluationHumanFeedbackFloatView` or `StaticEvaluationHumanFeedbackBooleanView`
+        // exists, which were created by the banned migration Migration0023
+        let should_succeed = migration.name() != "Migration0029";
         if should_succeed {
             assert!(
                 logs_contain(&format!("Migration succeeded: {name}")),
@@ -481,8 +482,7 @@ invoke_all_separate_tests!(
     test_rollback_helper,
     test_rollback_up_to_migration_index_,
     [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
     ]
 );
 
@@ -499,8 +499,9 @@ async fn test_rollback_apply_rollback() {
             .await
             .unwrap();
 
-        // Migration0023 is banned and Migration0029 only runs if views created by Migration0023 exist
-        let should_succeed = migration.name() != "Migration0023" && migration.name() != "Migration0029";
+        // Migration0029 only runs if `StaticEvaluationHumanFeedbackFloatView` or `StaticEvaluationHumanFeedbackBooleanView`
+        // exists, which were created by the banned migration Migration0023
+        let should_succeed = migration.name() != "Migration0029";
         if should_succeed {
             assert!(
                 logs_contain(&format!("Migration succeeded: {name}")),
@@ -605,8 +606,8 @@ async fn test_clickhouse_migration_manager() {
                 // When running for the first time, we should have a clean start.
                 assert!(clean_start);
             }
-            // Migration 0023 is banned and Migration 0029 depends on it
-            if name != "Migration0023" && name != "Migration0029" {
+            // Migration 0029 will not be applied since 0023 is turned off.
+            if name != "Migration0029" {
                 assert!(logs_contain(&format!("Applying migration: {name}")));
                 assert!(logs_contain(&format!("Migration succeeded: {name}")));
             }
@@ -629,8 +630,8 @@ async fn test_clickhouse_migration_manager() {
                 assert!(!clean_start);
             }
             let name = migrations[i].name();
-            // Migration 0023 is banned and Migration 0029 depends on it
-            if name != "Migration0023" && name != "Migration0029" {
+            // Migration 0029 depends on 0023 which is banned, so it won't apply
+            if name != "Migration0029" {
                 assert!(
                     !logs_contain(&format!("Applying migration: {name}")),
                     "Migration {name} should not have been applied in run_all because it was already applied"
@@ -657,7 +658,7 @@ async fn test_clickhouse_migration_manager() {
         // for each element in the array.
         [
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-            24, 25
+            24
         ]
     );
     run_all(&migrations).await;
