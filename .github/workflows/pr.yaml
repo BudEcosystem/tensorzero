@@ -165,9 +165,6 @@ jobs:
     strategy:
       matrix:
         clickhouse_version:
-          - tag: "24.12-alpine"
-            prefix: "24.12"
-            allow_failure: false
           - tag: "25.2-alpine"
             prefix: "25.2"
             allow_failure: false
