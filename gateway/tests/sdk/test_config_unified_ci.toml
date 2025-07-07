@@ -187,3 +187,55 @@ endpoints = ["chat"]
 [models."claude-instant-1.2".providers.dummy]
 type = "dummy"
 model_name = "test"
+
+# === Together AI Models - Universal OpenAI SDK Compatibility ===
+# These Together AI models also work perfectly with OpenAI SDK through /v1/chat/completions
+# This demonstrates universal compatibility extends to Together AI's models!
+
+[models."meta-llama/Llama-3.3-70B-Instruct-Turbo"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."meta-llama/Llama-3.3-70B-Instruct-Turbo".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."meta-llama/Llama-3.2-3B-Instruct-Turbo"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."meta-llama/Llama-3.2-3B-Instruct-Turbo".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."meta-llama/Llama-3.1-8B-Instruct-Turbo"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."meta-llama/Llama-3.1-8B-Instruct-Turbo".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."Qwen/Qwen2.5-72B-Instruct-Turbo"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."Qwen/Qwen2.5-72B-Instruct-Turbo".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."mistralai/Mixtral-8x7B-Instruct-v0.1"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."mistralai/Mixtral-8x7B-Instruct-v0.1".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."deepseek-ai/deepseek-v2.5"]
+routing = ["dummy"]
+endpoints = ["chat"]
+
+[models."deepseek-ai/deepseek-v2.5".providers.dummy]
+type = "dummy"
+model_name = "test"

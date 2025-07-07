@@ -23,7 +23,7 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --provider PROVIDER   Provider to test (openai, anthropic, all, universal) [default: all]"
+    echo "  --provider PROVIDER   Provider to test (openai, anthropic, together, all, universal) [default: all]"
     echo "  --mode MODE          Test mode (ci, full) [default: ci]"
     echo "  --port PORT          Gateway port [default: 3001]"
     echo "  --compare            Run comparison tests (full mode only)"
@@ -75,8 +75,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate inputs
-if [[ ! "$PROVIDER" =~ ^(openai|anthropic|all|universal)$ ]]; then
-    echo -e "${RED}Error: Invalid provider '$PROVIDER'. Must be openai, anthropic, all, or universal.${NC}"
+if [[ ! "$PROVIDER" =~ ^(openai|anthropic|together|all|universal)$ ]]; then
+    echo -e "${RED}Error: Invalid provider '$PROVIDER'. Must be openai, anthropic, together, all, or universal.${NC}"
     exit 1
 fi
 
@@ -126,6 +126,7 @@ if [ "$MODE" == "ci" ]; then
     export TENSORZERO_API_KEY="test-api-key"
     export OPENAI_API_KEY="dummy-key"
     export ANTHROPIC_API_KEY="dummy-key"
+    export TOGETHER_API_KEY="dummy-key"
 else
     # Full mode - check for .env file
     if [ ! -f ".env" ]; then
@@ -145,6 +146,11 @@ else
     
     if [[ "$PROVIDER" == "anthropic" || "$PROVIDER" == "all" ]] && [ -z "$ANTHROPIC_API_KEY" ]; then
         echo -e "${RED}Error: ANTHROPIC_API_KEY is not set!${NC}"
+        exit 1
+    fi
+    
+    if [[ "$PROVIDER" == "together" || "$PROVIDER" == "all" ]] && [ -z "$TOGETHER_API_KEY" ]; then
+        echo -e "${RED}Error: TOGETHER_API_KEY is not set!${NC}"
         exit 1
     fi
 fi
@@ -261,7 +267,7 @@ if [ "$PROVIDER" == "universal" ]; then
     fi
 elif [ "$PROVIDER" == "all" ]; then
     # Test all providers
-    for p in openai anthropic; do
+    for p in openai anthropic together; do
         echo -e "\n${BLUE}================================${NC}"
         echo -e "${BLUE}Testing provider: $p${NC}"
         echo -e "${BLUE}================================${NC}"

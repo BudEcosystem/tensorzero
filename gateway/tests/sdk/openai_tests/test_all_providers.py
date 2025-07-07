@@ -180,12 +180,19 @@ class TestOpenAISDKEndpointCoverage:
     def test_chat_completions_universal(self):
         """Chat completions should work with all chat-capable models."""
         chat_models = [
+            # OpenAI models
             "gpt-3.5-turbo",
             "gpt-4", 
+            # Anthropic models
             "claude-3-haiku-20240307",
             "claude-3-sonnet-20240229",
             "claude-3-5-sonnet-20241022",
-            "claude-3-opus-20240229"
+            "claude-3-opus-20240229",
+            # Together AI models
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+            "Qwen/Qwen2.5-72B-Instruct-Turbo",
+            "mistralai/Mixtral-8x7B-Instruct-v0.1"
         ]
         
         for model in chat_models:
