@@ -49,11 +49,37 @@ This directory contains integration tests that validate TensorZero's compatibili
    cargo run --bin gateway -- --config-file gateway/tests/sdk/test_config_[provider].toml
    ```
 
+## Recent Improvements
+
+🎉 **Major SDK Test Suite Cleanup Completed!**
+
+- ✅ **Removed redundant scripts** - Eliminated duplicate test runners  
+- ✅ **Enhanced common infrastructure** - Added universal client factory and shared validation
+- ✅ **Created universal test suites** - Reusable test classes that work across all providers
+- ✅ **Consolidated duplicate tests** - Unified cross-provider testing in `universal_tests/`
+- ✅ **Improved Together tests** - Updated to use shared infrastructure instead of duplicating code
+
+### New Universal Test Architecture
+
+The test suite now follows a **Universal SDK Architecture** with shared infrastructure:
+
+```
+common/
+├── utils.py           # Universal client factory, validation, test data
+├── test_suites.py     # Reusable test suites for all providers  
+└── base_test.py       # Abstract base classes
+
+universal_tests/       # NEW! Consolidated cross-provider tests
+├── test_openai_sdk_all_providers.py    # Universal SDK compatibility  
+├── test_cross_provider_comparison.py   # Side-by-side provider comparison
+└── conftest.py        # Shared fixtures
+```
+
 ## Running Tests
 
 ### Universal Test Runner
 
-The new `run_tests.sh` script provides a unified interface for all SDK tests:
+The `run_tests.sh` script provides a unified interface for all SDK tests:
 
 ```bash
 # Run all providers in CI mode (default)
@@ -68,6 +94,10 @@ The new `run_tests.sh` script provides a unified interface for all SDK tests:
 
 # Run interactive architecture demonstration (NEW!)
 ./run_tests.sh --demo
+
+# Run new consolidated universal tests
+cd universal_tests && pytest test_openai_sdk_all_providers.py -v
+cd universal_tests && pytest test_cross_provider_comparison.py -v
 
 # Run full integration tests (requires API keys)
 ./run_tests.sh --provider openai --mode full
@@ -107,18 +137,51 @@ See the architecture in action:
 python demonstrate_universal_sdk.py
 ```
 
-### Legacy Scripts (Deprecated)
+### Direct Usage
 
-The following scripts still work but redirect to the new runner:
-- `./run_tests_full.sh` → `./run_tests.sh --provider openai --mode full`
-- `./run_tests_ci.sh` → `./run_tests.sh --provider openai --mode ci`
+Use the unified test runner directly:
+- `./run_tests.sh --provider openai --mode full`  # Full OpenAI tests
+- `./run_tests.sh --provider openai --mode ci`    # CI OpenAI tests
+
+### Using the New Test Infrastructure
+
+#### For Test Writers
+
+Use the new shared infrastructure to avoid code duplication:
+
+```python
+# Instead of duplicating client setup:
+from common.utils import create_universal_client
+client = create_universal_client(provider_hint="together")
+
+# Instead of duplicating validation logic:
+from common.utils import validate_chat_response, validate_embedding_response
+validate_chat_response(response, provider_type="together")
+
+# Instead of writing custom test classes:
+from common.test_suites import UniversalChatTestSuite, UniversalEmbeddingTestSuite
+chat_suite = UniversalChatTestSuite(models=["gpt-3.5-turbo"], provider_hint="openai")
+chat_suite.test_basic_chat()
+```
+
+#### Universal Test Data
+
+Access standardized test data:
+
+```python  
+from common.utils import UniversalTestData
+
+models = UniversalTestData.get_provider_models()["together"]
+embedding_models = UniversalTestData.get_embedding_models()["openai"]
+test_messages = UniversalTestData.get_basic_chat_messages()
+```
 
 ### Provider-Specific Shortcuts
 
 ```bash
-# Anthropic tests
-./run_tests_anthropic.sh           # CI mode
-./run_tests_anthropic.sh --mode full  # Full mode
+# Together tests (improved versions available)
+pytest together_tests/test_ci_together_improved.py -v
+pytest together_tests/test_embeddings_improved.py -v
 ```
 
 ### Run Specific Test Module
@@ -317,18 +380,27 @@ Quick overview:
 
 ```
 /gateway/tests/sdk/
-├── common/                    # Shared utilities and base classes
+├── common/                    # 🆕 Enhanced shared infrastructure
 │   ├── base_test.py          # Abstract base test classes
-│   └── utils.py              # Common test utilities
+│   ├── utils.py              # 🆕 Universal client factory, validation, test data
+│   └── test_suites.py        # 🆕 Reusable test suites for all providers
+├── universal_tests/           # 🆕 Consolidated cross-provider tests
+│   ├── test_openai_sdk_all_providers.py  # Universal SDK compatibility
+│   ├── test_cross_provider_comparison.py # Side-by-side comparisons
+│   └── conftest.py           # Shared fixtures
 ├── openai_tests/             # OpenAI SDK tests
 │   ├── test_*.py            # Full integration tests
 │   ├── test_ci_*.py         # CI tests with dummy provider
-│   ├── test_all_providers.py # Universal SDK compatibility tests
+│   ├── test_all_providers.py # ⚠️ Consider migrating to universal_tests/
 │   └── test_universal_sdk_demo.py # Focused demo tests
 ├── anthropic_tests/          # Anthropic SDK tests
 │   ├── test_*.py            # Full integration tests
 │   ├── test_ci_*.py         # CI tests with dummy provider
 │   └── test_native_messages.py # Native Anthropic SDK tests
+├── together_tests/           # Together AI tests
+│   ├── test_*.py            # Original tests
+│   ├── test_*_improved.py   # 🆕 Improved versions using shared infrastructure
+│   └── test_ci_*.py         # CI tests
 ├── fixtures/                 # Test data
 ├── test_config_*.toml       # Provider configurations
 ├── test_config_unified_ci.toml # Unified config for universal tests
