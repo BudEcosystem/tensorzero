@@ -1,6 +1,6 @@
 use crate::clickhouse::migration_manager::migration_trait::Migration;
 use crate::clickhouse::ClickHouseConnectionInfo;
-use crate::error::{Error, ErrorDetails};
+use crate::error::Error;
 
 use super::{check_column_exists, check_table_exists};
 use async_trait::async_trait;
@@ -27,20 +27,18 @@ const MIGRATION_ID: &str = "0030";
 
 #[async_trait]
 impl Migration for Migration0030<'_> {
-    /// Check that the BatchRequest table exists
+    /// No special prerequisites for this migration
     async fn can_apply(&self) -> Result<(), Error> {
-        if !check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await? {
-            return Err(ErrorDetails::ClickHouseMigration {
-                id: MIGRATION_ID.to_string(),
-                message: "BatchRequest table does not exist".to_string(),
-            }
-            .into());
-        }
         Ok(())
     }
 
     /// Check if the migration has already been applied by checking if the OpenAI-specific columns exist
     async fn should_apply(&self) -> Result<bool, Error> {
+        // First check if the BatchRequest table exists - if not, we need to wait for migration_0006
+        if !check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await? {
+            return Ok(false);
+        }
+        
         // Since all columns are added in a single atomic ALTER TABLE statement,
         // we only need to check for one of them to see if the migration has been applied.
         Ok(!check_column_exists(

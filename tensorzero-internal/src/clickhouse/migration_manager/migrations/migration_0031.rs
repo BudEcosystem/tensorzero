@@ -1,6 +1,6 @@
 use crate::clickhouse::migration_manager::migration_trait::Migration;
 use crate::clickhouse::ClickHouseConnectionInfo;
-use crate::error::{Error, ErrorDetails};
+use crate::error::Error;
 
 use super::{check_table_exists, get_column_type};
 use async_trait::async_trait;
@@ -18,34 +18,27 @@ const MIGRATION_ID: &str = "0031";
 
 #[async_trait]
 impl Migration for Migration0031<'_> {
-    /// Check that the BatchRequest table exists
+    /// No special prerequisites for this migration
     async fn can_apply(&self) -> Result<(), Error> {
-        if !check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await? {
-            return Err(ErrorDetails::ClickHouseMigration {
-                id: MIGRATION_ID.to_string(),
-                message: "BatchRequest table does not exist".to_string(),
-            }
-            .into());
-        }
         Ok(())
     }
 
     /// Check if the migration has already been applied by checking the enum values
     async fn should_apply(&self) -> Result<bool, Error> {
-        // First check if we're in a transitional state
+        // First check if the BatchRequest table exists - if not, we need to wait for migration_0006
+        let batch_request_exists =
+            check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
+        if !batch_request_exists {
+            // Table doesn't exist yet, can't apply migration
+            return Ok(false);
+        }
+        
+        // Check if we're in a transitional state
         let batch_request_new_exists =
             check_table_exists(self.clickhouse, "BatchRequest_new", MIGRATION_ID).await?;
         if batch_request_new_exists {
             // We're in the middle of migration, should continue applying
             return Ok(true);
-        }
-
-        // Check if BatchRequest table exists
-        let batch_request_exists =
-            check_table_exists(self.clickhouse, "BatchRequest", MIGRATION_ID).await?;
-        if !batch_request_exists {
-            // Table doesn't exist, can't apply migration
-            return Ok(false);
         }
 
         // Check if the status column exists
