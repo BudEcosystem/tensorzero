@@ -11,7 +11,10 @@ import pytest
 from typing import Dict, List, Tuple
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 from common.utils import create_universal_client, validate_chat_response
 
@@ -306,7 +309,7 @@ class TestCrossProviderComparison:
                 "success": True,
                 "content_preview": response.choices[0].message.content[:100] + "...",
                 "response_id": response.id,
-                "usage": response.usage.dict() if response.usage else None
+                "usage": response.usage.__dict__ if response.usage else None
             }
             
             universal_results.append(result)

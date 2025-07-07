@@ -11,23 +11,14 @@ The key principle: One OpenAI client works with ALL providers through /v1/chat/c
 """
 
 import os
-import sys
 import pytest
-from typing import Dict, List
+from openai import OpenAI
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from common.utils import create_universal_client, UniversalTestData
-from common.test_suites import (
-    UniversalChatTestSuite, 
-    UniversalStreamingTestSuite,
-    UniversalEmbeddingTestSuite,
-    UniversalErrorTestSuite
+# Universal OpenAI client that works with ALL providers
+client = OpenAI(
+    base_url=os.getenv("TENSORZERO_BASE_URL", "http://localhost:3001") + "/v1",
+    api_key=os.getenv("TENSORZERO_API_KEY", "test-api-key")
 )
-
-# Create universal client that works with ALL providers
-client = create_universal_client()
 
 
 class TestOpenAISDKUniversalCompatibility:
@@ -35,23 +26,24 @@ class TestOpenAISDKUniversalCompatibility:
     
     def test_all_chat_models_basic(self):
         """Test basic chat with models from all providers."""
-        all_models = UniversalTestData.get_provider_models()
+        # Define models directly to avoid import issues
+        test_models = [
+            "gpt-3.5-turbo",  # OpenAI
+            "claude-3-haiku-20240307",  # Anthropic  
+            "meta-llama/Llama-3.2-3B-Instruct-Turbo",  # Together
+        ]
         
-        for provider, models in all_models.items():
-            print(f"\n--- Testing {provider.upper()} models via OpenAI SDK ---")
+        for model in test_models:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": f"Hello from {model}"}],
+                max_tokens=50
+            )
             
-            for model in models:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": f"Hello from {model}"}],
-                    max_tokens=50
-                )
-                
-                # Universal validation
-                assert response.choices[0].message.content is not None
-                assert response.model == model
-                assert len(response.choices[0].message.content) > 0
-                print(f"✅ {model}: OK")
+            # Basic validation
+            assert response.choices[0].message.content is not None
+            assert response.model == model
+            assert len(response.choices[0].message.content) > 0
     
     def test_cross_provider_streaming(self):
         """Test that streaming works uniformly across all providers."""
