@@ -66,6 +66,42 @@ endpoints = ["chat"]
 type = "dummy"
 model_name = "test"
 
+# === Together AI Multimodal Models with Dummy Provider ===
+# Embedding models
+[models."together-bge-base"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."together-bge-base".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."together-m2-bert"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."together-m2-bert".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+# Image generation models
+[models."flux-schnell"]
+routing = ["dummy"]
+endpoints = ["image_generation"]
+
+[models."flux-schnell".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+# Text-to-speech models
+[models."together-tts"]
+routing = ["dummy"]
+endpoints = ["text_to_speech"]
+
+[models."together-tts".providers.dummy]
+type = "dummy"
+model_name = "test"
+
 # === Comparison models from other providers ===
 # For cross-provider testing
 
@@ -90,5 +126,13 @@ routing = ["dummy"]
 endpoints = ["chat"]
 
 [models."claude-3-5-sonnet-20241022".providers.dummy]
+type = "dummy"
+model_name = "test"
+
+[models."text-embedding-3-small"]
+routing = ["dummy"]
+endpoints = ["embedding"]
+
+[models."text-embedding-3-small".providers.dummy]
 type = "dummy"
 model_name = "test"

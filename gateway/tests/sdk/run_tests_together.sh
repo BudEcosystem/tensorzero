@@ -63,6 +63,7 @@ echo "Running CI tests with dummy provider..."
 echo "---------------------------------------"
 run_gateway "test_config_together_ci.toml"
 python -m pytest together_tests/test_ci_together.py -v
+python -m pytest together_tests/test_ci_together_multimodal.py -v
 stop_gateway
 
 # Run full tests if API key is available
@@ -72,6 +73,10 @@ if check_api_key; then
     echo "----------------------------------------------"
     run_gateway "test_config_together.toml"
     python -m pytest together_tests/test_universal_openai_sdk.py -v
+    python -m pytest together_tests/test_embeddings.py -v
+    python -m pytest together_tests/test_image_generation.py -v
+    python -m pytest together_tests/test_text_to_speech.py -v
+    python -m pytest together_tests/test_together_multimodal.py -v
     stop_gateway
 else
     echo ""

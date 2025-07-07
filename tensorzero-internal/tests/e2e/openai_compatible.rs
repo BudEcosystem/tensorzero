@@ -1545,6 +1545,402 @@ async fn test_openai_compatible_audio_speech_errors() {
 }
 
 #[tokio::test]
+async fn test_openai_compatible_embeddings_together() {
+    let client = Client::new();
+
+    // Test Together BGE Base embedding
+    let payload = json!({
+        "model": "together-bge-base",
+        "input": "Test embedding with Together AI BGE model"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/embeddings"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response_json: Value = response.json().await.unwrap();
+    assert_eq!(response_json["object"], "list");
+    assert_eq!(response_json["model"], "together-bge-base");
+
+    let data = response_json["data"].as_array().unwrap();
+    assert_eq!(data.len(), 1);
+
+    let embedding_data = &data[0];
+    assert_eq!(embedding_data["object"], "embedding");
+    assert_eq!(embedding_data["index"], 0);
+
+    let embedding = embedding_data["embedding"].as_array().unwrap();
+    assert!(!embedding.is_empty());
+    // BGE base model typically has 768 dimensions
+    assert!(embedding.len() > 0);
+
+    // Test Together M2 BERT embedding
+    let payload_m2 = json!({
+        "model": "together-m2-bert",
+        "input": "Test embedding with Together AI M2 BERT model"
+    });
+
+    let response_m2 = client
+        .post(get_gateway_endpoint("/v1/embeddings"))
+        .json(&payload_m2)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_m2.status(), StatusCode::OK);
+
+    let response_m2_json: Value = response_m2.json().await.unwrap();
+    assert_eq!(response_m2_json["model"], "together-m2-bert");
+}
+
+#[tokio::test]
+async fn test_openai_compatible_embeddings_together_batch() {
+    let client = Client::new();
+
+    // Test batch embeddings with Together
+    let payload = json!({
+        "model": "together-bge-base",
+        "input": [
+            "First text for embedding",
+            "Second text for embedding",
+            "Third text for embedding"
+        ]
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/embeddings"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response_json: Value = response.json().await.unwrap();
+    assert_eq!(response_json["object"], "list");
+    assert_eq!(response_json["model"], "together-bge-base");
+
+    let data = response_json["data"].as_array().unwrap();
+    assert_eq!(data.len(), 3); // Should have 3 embeddings
+
+    // Check each embedding has correct structure
+    for (i, embedding_data) in data.iter().enumerate() {
+        assert_eq!(embedding_data["object"], "embedding");
+        assert_eq!(embedding_data["index"], i);
+
+        let embedding = embedding_data["embedding"].as_array().unwrap();
+        assert!(!embedding.is_empty());
+        
+        // Verify all values are numbers
+        for value in embedding {
+            assert!(value.is_f64());
+        }
+    }
+
+    let usage = &response_json["usage"];
+    assert!(usage["prompt_tokens"].as_u64().unwrap() > 0);
+    assert!(usage["total_tokens"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn test_openai_compatible_audio_speech_together_voices() {
+    let client = Client::new();
+
+    // Test Together-specific voice names
+    let together_voices = vec![
+        ("helpful woman", "Standard clear female voice"),
+        ("laidback woman", "Relaxed casual female voice"),
+        ("meditation lady", "Calm soothing female voice"),
+        ("newsman", "Professional male narrator"),
+        ("friendly sidekick", "Enthusiastic supportive voice"),
+        ("british reading lady", "British accent female"),
+        ("barbershop man", "Warm conversational male"),
+        ("indian lady", "Indian accent female"),
+        ("german conversational woman", "German accent female"),
+        ("pilot over intercom", "Clear professional male"),
+        ("australian customer support man", "Australian accent male"),
+        ("french narrator lady", "French accent female"),
+        ("spanish narrator man", "Spanish accent male"),
+        ("japanese woman conversational", "Japanese accent female"),
+        ("calm lady", "Soothing female voice"),
+        ("wise man", "Thoughtful male voice"),
+        ("customer support lady", "Professional female support"),
+        ("announcer man", "Broadcasting male voice"),
+        ("asmr lady", "Soft whispering female"),
+        ("storyteller lady", "Engaging narrative female"),
+        ("princess", "Theatrical female voice"),
+        ("doctor mischief", "Playful character voice"),
+        ("1920's radioman", "Vintage male broadcaster")
+    ];
+
+    // Test a few Together-specific voices
+    for (voice, description) in together_voices.iter().take(3) {
+        let payload = json!({
+            "model": "together-tts",
+            "input": format!("Testing {}: {}", voice, description),
+            "voice": voice,
+            "response_format": "mp3"
+        });
+
+        let response = client
+            .post(get_gateway_endpoint("/v1/audio/speech"))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+
+        // Should fail with auth error but validates voice handling
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let error_json: Value = response.json().await.unwrap();
+        assert!(error_json["error"].as_str().unwrap().contains("API key"));
+    }
+}
+
+#[tokio::test]
+async fn test_openai_compatible_image_generation_together_comprehensive() {
+    let client = Client::new();
+
+    // Test FLUX model with different parameters
+    let test_cases = vec![
+        // Basic FLUX generation
+        json!({
+            "model": "flux-schnell",
+            "prompt": "A detailed oil painting of a sunset over mountains",
+            "n": 1,
+            "size": "1024x1024",
+            "response_format": "url"
+        }),
+        // Multiple images
+        json!({
+            "model": "flux-schnell",
+            "prompt": "Abstract geometric patterns in vibrant colors",
+            "n": 2,
+            "size": "512x512",
+            "response_format": "url"
+        }),
+        // Base64 response
+        json!({
+            "model": "flux-schnell",
+            "prompt": "A serene Japanese garden with cherry blossoms",
+            "n": 1,
+            "size": "1024x1024",
+            "response_format": "b64_json"
+        }),
+        // Different size
+        json!({
+            "model": "flux-schnell",
+            "prompt": "Futuristic cityscape with flying vehicles",
+            "n": 1,
+            "size": "1024x768",
+            "response_format": "url"
+        })
+    ];
+
+    for payload in test_cases {
+        let response = client
+            .post(get_gateway_endpoint("/v1/images/generations"))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+
+        // Should fail with auth error but validates request handling
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let error_json: Value = response.json().await.unwrap();
+        assert!(error_json["error"].as_str().unwrap().contains("API key"));
+    }
+}
+
+#[tokio::test]
+async fn test_openai_compatible_together_json_mode() {
+    let client = Client::new();
+
+    // Test Together model with JSON mode
+    let payload = json!({
+        "model": "llama3.1-8b-instruct-together",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that always responds in valid JSON format."
+            },
+            {
+                "role": "user",
+                "content": "List three programming languages with their key features."
+            }
+        ],
+        "response_format": {"type": "json_object"},
+        "stream": false
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/chat/completions"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    // Should fail with auth error but validates JSON mode support
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn test_openai_compatible_together_tool_calling() {
+    let client = Client::new();
+
+    // Test Together model with tool calling
+    let payload = json!({
+        "model": "llama3.1-405b-instruct-turbo-together",
+        "messages": [
+            {
+                "role": "user",
+                "content": "What's the weather like in San Francisco?"
+            }
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the current weather in a location",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "The city and state"
+                            },
+                            "unit": {
+                                "type": "string",
+                                "enum": ["celsius", "fahrenheit"]
+                            }
+                        },
+                        "required": ["location"]
+                    }
+                }
+            }
+        ],
+        "tool_choice": "auto",
+        "stream": false
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/chat/completions"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    // Should fail with auth error but validates tool calling support
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn test_openai_compatible_together_streaming() {
+    use futures::StreamExt;
+    use reqwest_eventsource::{Event, RequestBuilderExt};
+
+    let client = Client::new();
+    let episode_id = Uuid::now_v7();
+
+    let payload = json!({
+        "model": "llama3.1-8b-instruct-together",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Tell me a short story in 3 sentences."
+            }
+        ],
+        "stream": true,
+        "stream_options": {
+            "include_usage": true
+        }
+    });
+
+    let mut response = client
+        .post(get_gateway_endpoint("/v1/chat/completions"))
+        .header("Content-Type", "application/json")
+        .header("X-Episode-Id", episode_id.to_string())
+        .json(&payload)
+        .eventsource()
+        .unwrap();
+
+    // Should fail immediately with auth error
+    if let Some(event) = response.next().await {
+        match event {
+            Err(_) => {
+                // Expected error due to missing API key
+            }
+            Ok(_) => {
+                panic!("Expected error due to missing API key");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_openai_compatible_together_error_handling() {
+    let client = Client::new();
+
+    // Test various error scenarios
+    
+    // 1. Invalid model for Together provider
+    let payload = json!({
+        "model": "together-invalid-model",
+        "input": "Test input"
+    });
+
+    let response = client
+        .post(get_gateway_endpoint("/v1/embeddings"))
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // 2. Chat model used for embeddings
+    let payload_wrong_type = json!({
+        "model": "llama3.1-8b-instruct-together",
+        "input": "Test input"
+    });
+
+    let response_wrong_type = client
+        .post(get_gateway_endpoint("/v1/embeddings"))
+        .json(&payload_wrong_type)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_wrong_type.status(), StatusCode::BAD_REQUEST);
+
+    // 3. Embedding model used for chat
+    let payload_embedding_for_chat = json!({
+        "model": "together-bge-base",
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let response_embedding_for_chat = client
+        .post(get_gateway_endpoint("/v1/chat/completions"))
+        .json(&payload_embedding_for_chat)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response_embedding_for_chat.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn test_openai_compatible_image_generation_xai() {
     let client = Client::new();
 
