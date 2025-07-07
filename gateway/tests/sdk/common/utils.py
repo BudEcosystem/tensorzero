@@ -10,11 +10,39 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import requests
+from openai import OpenAI
+
+
+# ===== CLIENT FACTORY =====
+
+def create_universal_client(provider_hint: Optional[str] = None) -> OpenAI:
+    """
+    Create OpenAI client that works with all providers through universal SDK architecture.
+    
+    Args:
+        provider_hint: Optional hint about which provider will be used (for logging/debugging)
+    
+    Returns:
+        OpenAI client configured for TensorZero gateway
+    """
+    base_url = os.getenv("TENSORZERO_BASE_URL", "http://localhost:3001")
+    api_key = os.getenv("TENSORZERO_API_KEY", "test-api-key")
+    
+    client = OpenAI(
+        base_url=f"{base_url}/v1",
+        api_key=api_key
+    )
+    
+    # Add provider hint as metadata for debugging
+    if provider_hint:
+        client._provider_hint = provider_hint
+    
+    return client
 
 
 def get_test_config_path(provider: str, ci_mode: bool = False) -> str:
     """Get the path to the test configuration file."""
-    config_dir = Path(__file__).parent.parent.parent
+    config_dir = Path(__file__).parent.parent
     if ci_mode:
         return str(config_dir / f"test_config_{provider}_ci.toml")
     return str(config_dir / f"test_config_{provider}.toml")
@@ -92,6 +120,59 @@ def compare_responses(response1: Dict[str, Any], response2: Dict[str, Any],
     cleaned2 = remove_fields(response2, ignore_fields)
     
     return cleaned1 == cleaned2
+
+
+# ===== UNIVERSAL RESPONSE VALIDATION =====
+
+def validate_chat_response(response: Any, provider_type: Optional[str] = None):
+    """Universal chat response validation that works for all providers."""
+    assert response.id is not None, "Response missing 'id' field"
+    assert response.object == "chat.completion", f"Expected object='chat.completion', got '{response.object}'"
+    assert response.model is not None, "Response missing 'model' field"
+    assert response.created is not None, "Response missing 'created' field"
+    assert len(response.choices) > 0, "Response has no choices"
+    
+    choice = response.choices[0]
+    assert choice.index is not None, "Choice missing 'index' field"
+    assert choice.message is not None, "Choice missing 'message' field"
+    assert choice.message.role == "assistant", f"Expected role='assistant', got '{choice.message.role}'"
+    assert choice.message.content is not None, "Message content is None"
+    assert len(choice.message.content) > 0, "Message content is empty"
+    
+    # Check usage if present
+    if hasattr(response, 'usage') and response.usage:
+        assert response.usage.prompt_tokens is not None, "Usage missing prompt_tokens"
+        assert response.usage.completion_tokens is not None, "Usage missing completion_tokens" 
+        assert response.usage.total_tokens is not None, "Usage missing total_tokens"
+        assert response.usage.total_tokens >= response.usage.prompt_tokens + response.usage.completion_tokens
+
+
+def validate_embedding_response(response: Any, expected_count: int = 1):
+    """Universal embedding response validation."""
+    assert response.object == "list", f"Expected object='list', got '{response.object}'"
+    assert len(response.data) == expected_count, f"Expected {expected_count} embeddings, got {len(response.data)}"
+    
+    for i, embedding_data in enumerate(response.data):
+        assert embedding_data.object == "embedding", f"Expected object='embedding', got '{embedding_data.object}'"
+        assert embedding_data.index == i, f"Expected index={i}, got {embedding_data.index}"
+        assert len(embedding_data.embedding) > 0, f"Embedding {i} is empty"
+        assert all(isinstance(x, float) for x in embedding_data.embedding), f"Embedding {i} contains non-float values"
+    
+    # Check usage
+    assert response.usage is not None, "Response missing usage"
+    assert response.usage.total_tokens > 0, "Usage total_tokens should be > 0"
+
+
+def validate_streaming_chunk(chunk: Any):
+    """Universal streaming chunk validation."""
+    assert chunk.id is not None, "Chunk missing 'id' field"
+    assert chunk.object == "chat.completion.chunk", f"Expected object='chat.completion.chunk', got '{chunk.object}'"
+    assert chunk.model is not None, "Chunk missing 'model' field"
+    assert len(chunk.choices) > 0, "Chunk has no choices"
+    
+    choice = chunk.choices[0]
+    assert choice.index is not None, "Choice missing 'index' field"
+    assert choice.delta is not None, "Choice missing 'delta' field"
 
 
 def validate_response_format(response: Any, required_fields: List[str]):
@@ -189,8 +270,67 @@ def create_temp_image_file(width: int = 256, height: int = 256) -> str:
         return f.name
 
 
-class TestDataGenerator:
-    """Generate test data for various scenarios."""
+# ===== UNIVERSAL TEST DATA GENERATORS =====
+
+class UniversalTestData:
+    """Generate test data compatible with all providers."""
+    
+    @staticmethod
+    def get_basic_chat_messages() -> List[Dict[str, str]]:
+        """Get basic chat messages for universal testing."""
+        return [
+            {"role": "user", "content": "Hello, world!"}
+        ]
+    
+    @staticmethod
+    def get_multi_turn_messages() -> List[Dict[str, str]]:
+        """Get multi-turn conversation for testing."""
+        return [
+            {"role": "user", "content": "My name is Alice"},
+            {"role": "assistant", "content": "Hello Alice! Nice to meet you."},
+            {"role": "user", "content": "What's my name?"}
+        ]
+    
+    @staticmethod
+    def get_system_prompt_messages() -> List[Dict[str, str]]:
+        """Get messages with system prompt."""
+        return [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello!"}
+        ]
+    
+    @staticmethod
+    def get_provider_models() -> Dict[str, List[str]]:
+        """Get model lists for each provider."""
+        return {
+            "openai": [
+                "gpt-3.5-turbo",
+                "gpt-4"
+            ],
+            "anthropic": [
+                "claude-3-haiku-20240307",
+                "claude-3-sonnet-20240229"
+            ],
+            "together": [
+                "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+                "Qwen/Qwen2.5-72B-Instruct-Turbo"
+            ]
+        }
+    
+    @staticmethod
+    def get_embedding_models() -> Dict[str, List[str]]:
+        """Get embedding model lists for each provider."""
+        return {
+            "openai": [
+                "text-embedding-3-small",
+                "text-embedding-ada-002"
+            ],
+            "together": [
+                "together-bge-base",
+                "together-m2-bert"
+            ]
+        }
     
     @staticmethod
     def get_test_prompts() -> List[str]:
@@ -202,6 +342,26 @@ class TestDataGenerator:
             "Explain quantum computing in one sentence.",
             "What's the weather like?",
         ]
+    
+    @staticmethod
+    def get_embedding_texts() -> List[str]:
+        """Get texts for embedding tests."""
+        return [
+            "The quick brown fox jumps over the lazy dog.",
+            "Machine learning is a subset of artificial intelligence.",
+            "Python is a popular programming language.",
+            "The Earth orbits around the Sun.",
+            "Water freezes at 0 degrees Celsius.",
+        ]
+
+
+class TestDataGenerator:
+    """Legacy class - use UniversalTestData instead."""
+    
+    @staticmethod
+    def get_test_prompts() -> List[str]:
+        """Get a list of test prompts."""
+        return UniversalTestData.get_test_prompts()
     
     @staticmethod
     def get_test_system_prompts() -> List[str]:
@@ -216,13 +376,7 @@ class TestDataGenerator:
     @staticmethod
     def get_embedding_texts() -> List[str]:
         """Get texts for embedding tests."""
-        return [
-            "The quick brown fox jumps over the lazy dog.",
-            "Machine learning is a subset of artificial intelligence.",
-            "Python is a popular programming language.",
-            "The Earth orbits around the Sun.",
-            "Water freezes at 0 degrees Celsius.",
-        ]
+        return UniversalTestData.get_embedding_texts()
 
 
 def cleanup_temp_files(*file_paths: str):
