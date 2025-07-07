@@ -738,7 +738,7 @@ async fn test_openai_compatible_route_with_json_schema() {
 #[tokio::test]
 async fn test_openai_compatible_streaming_tool_call() {
     use futures::StreamExt;
-    use reqwest_eventsource::{Event, RequestBuilderExt};
+    use reqwest_eventsource::RequestBuilderExt;
 
     let client = Client::new();
     let episode_id = Uuid::now_v7();
@@ -882,7 +882,7 @@ async fn test_openai_compatible_warn_unknown_fields() {
 #[tokio::test]
 async fn test_openai_compatible_streaming() {
     use futures::StreamExt;
-    use reqwest_eventsource::{Event, RequestBuilderExt};
+    use reqwest_eventsource::RequestBuilderExt;
 
     let client = Client::new();
     let episode_id = Uuid::now_v7();
@@ -990,7 +990,7 @@ async fn test_openai_compatible_logprobs_true_non_stream() {
 #[tokio::test]
 async fn test_openai_compatible_logprobs_true_stream() {
     use futures::StreamExt;
-    use reqwest_eventsource::{Event, RequestBuilderExt};
+    use reqwest_eventsource::RequestBuilderExt;
 
     let client = Client::new();
     let episode_id = Uuid::now_v7();
@@ -1578,7 +1578,6 @@ async fn test_openai_compatible_embeddings_together() {
     let embedding = embedding_data["embedding"].as_array().unwrap();
     assert!(!embedding.is_empty());
     // BGE base model typically has 768 dimensions
-    assert!(embedding.len() > 0);
 
     // Test Together M2 BERT embedding
     let payload_m2 = json!({
@@ -1637,7 +1636,7 @@ async fn test_openai_compatible_embeddings_together_batch() {
 
         let embedding = embedding_data["embedding"].as_array().unwrap();
         assert!(!embedding.is_empty());
-        
+
         // Verify all values are numbers
         for value in embedding {
             assert!(value.is_f64());
@@ -1677,7 +1676,7 @@ async fn test_openai_compatible_audio_speech_together_voices() {
         ("storyteller lady", "Engaging narrative female"),
         ("princess", "Theatrical female voice"),
         ("doctor mischief", "Playful character voice"),
-        ("1920's radioman", "Vintage male broadcaster")
+        ("1920's radioman", "Vintage male broadcaster"),
     ];
 
     // Test a few Together-specific voices
@@ -1741,7 +1740,7 @@ async fn test_openai_compatible_image_generation_together_comprehensive() {
             "n": 1,
             "size": "1024x768",
             "response_format": "url"
-        })
+        }),
     ];
 
     for payload in test_cases {
@@ -1848,7 +1847,7 @@ async fn test_openai_compatible_together_tool_calling() {
 #[tokio::test]
 async fn test_openai_compatible_together_streaming() {
     use futures::StreamExt;
-    use reqwest_eventsource::{Event, RequestBuilderExt};
+    use reqwest_eventsource::RequestBuilderExt;
 
     let client = Client::new();
     let episode_id = Uuid::now_v7();
@@ -1893,7 +1892,7 @@ async fn test_openai_compatible_together_error_handling() {
     let client = Client::new();
 
     // Test various error scenarios
-    
+
     // 1. Invalid model for Together provider
     let payload = json!({
         "model": "together-invalid-model",
@@ -1937,7 +1936,10 @@ async fn test_openai_compatible_together_error_handling() {
         .await
         .unwrap();
 
-    assert_eq!(response_embedding_for_chat.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_embedding_for_chat.status(),
+        StatusCode::BAD_REQUEST
+    );
 }
 
 #[tokio::test]
