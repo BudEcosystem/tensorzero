@@ -16,7 +16,7 @@ use crate::{
     error::{Error, ErrorDetails},
     inference::{
         providers::{
-            azure::AzureProvider, fireworks::FireworksProvider, openai::OpenAIProvider, 
+            azure::AzureProvider, fireworks::FireworksProvider, openai::OpenAIProvider,
             together::TogetherProvider, vllm::VLLMProvider,
         },
         types::{

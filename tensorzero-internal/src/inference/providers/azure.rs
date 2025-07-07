@@ -1,7 +1,10 @@
 use std::sync::OnceLock;
 
 use futures::{StreamExt, TryStreamExt};
-use reqwest::{multipart::{Form, Part}, StatusCode};
+use reqwest::{
+    multipart::{Form, Part},
+    StatusCode,
+};
 use reqwest_eventsource::RequestBuilderExt;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -11,17 +14,19 @@ use url::Url;
 
 use crate::audio::{
     AudioOutputFormat, AudioTranscriptionProvider, AudioTranscriptionProviderResponse,
-    AudioTranscriptionRequest, AudioTranscriptionResponseFormat, AudioTranslationProvider, 
-    AudioTranslationProviderResponse, AudioTranslationRequest, TextToSpeechProvider, 
+    AudioTranscriptionRequest, AudioTranscriptionResponseFormat, AudioTranslationProvider,
+    AudioTranslationProviderResponse, AudioTranslationRequest, TextToSpeechProvider,
     TextToSpeechProviderResponse, TextToSpeechRequest,
 };
 use crate::cache::ModelProviderRequest;
-use crate::embeddings::{EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest};
+use crate::embeddings::{
+    EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest,
+};
 use crate::endpoints::inference::InferenceCredentials;
 use crate::error::{DisplayOrDebugGateway, Error, ErrorDetails};
 use crate::images::{
-    ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
-    ImageData, ImageResponseFormat,
+    ImageData, ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
+    ImageResponseFormat,
 };
 use crate::inference::types::batch::BatchRequestRow;
 use crate::inference::types::batch::PollBatchInferenceResponse;
@@ -375,10 +380,11 @@ impl EmbeddingProvider for AzureProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<EmbeddingProviderResponse, Error> {
         let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
-        let request_body = AzureEmbeddingRequest::new(&request.input, request.encoding_format.as_deref());
+        let request_body =
+            AzureEmbeddingRequest::new(&request.input, request.encoding_format.as_deref());
         let request_url = get_azure_embeddings_url(&self.endpoint, &self.deployment_id)?;
         let start_time = Instant::now();
-        
+
         let res = client
             .post(request_url)
             .header("Content-Type", "application/json")
@@ -398,7 +404,7 @@ impl EmbeddingProvider for AzureProvider {
                     raw_response: None,
                 })
             })?;
-            
+
         if res.status().is_success() {
             let raw_response = res.text().await.map_err(|e| {
                 Error::new(ErrorDetails::InferenceServer {
@@ -424,17 +430,17 @@ impl EmbeddingProvider for AzureProvider {
                         provider_type: PROVIDER_TYPE.to_string(),
                     })
                 })?;
-                
+
             let latency = Latency::NonStreaming {
                 response_time: start_time.elapsed(),
             };
-            
+
             let embeddings: Vec<Vec<f32>> = response
                 .data
                 .into_iter()
                 .map(|data| data.embedding)
                 .collect();
-                
+
             let raw_request = serde_json::to_string(&request_body).map_err(|e| {
                 Error::new(ErrorDetails::Serialization {
                     message: format!(
@@ -443,7 +449,7 @@ impl EmbeddingProvider for AzureProvider {
                     ),
                 })
             })?;
-            
+
             Ok(EmbeddingProviderResponse::new(
                 embeddings,
                 request.input.clone(),
@@ -489,22 +495,21 @@ impl AudioTranscriptionProvider for AzureProvider {
         let start_time = Instant::now();
 
         // Create multipart form
-        let mut form = Form::new()
-            .part(
-                "file",
-                Part::bytes(request.file.clone())
-                    .file_name(request.filename.clone())
-                    .mime_str("audio/mpeg")
-                    .map_err(|e| {
-                        Error::new(ErrorDetails::InferenceClient {
-                            status_code: None,
-                            message: format!("Failed to set MIME type: {e}"),
-                            provider_type: PROVIDER_TYPE.to_string(),
-                            raw_request: None,
-                            raw_response: None,
-                        })
-                    })?,
-            );
+        let mut form = Form::new().part(
+            "file",
+            Part::bytes(request.file.clone())
+                .file_name(request.filename.clone())
+                .mime_str("audio/mpeg")
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        status_code: None,
+                        message: format!("Failed to set MIME type: {e}"),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: None,
+                        raw_response: None,
+                    })
+                })?,
+        );
 
         if let Some(language) = &request.language {
             form = form.text("language", language.clone());
@@ -651,22 +656,21 @@ impl AudioTranslationProvider for AzureProvider {
         let start_time = Instant::now();
 
         // Create multipart form
-        let mut form = Form::new()
-            .part(
-                "file",
-                Part::bytes(request.file.clone())
-                    .file_name(request.filename.clone())
-                    .mime_str("audio/mpeg")
-                    .map_err(|e| {
-                        Error::new(ErrorDetails::InferenceClient {
-                            status_code: None,
-                            message: format!("Failed to set MIME type: {e}"),
-                            provider_type: PROVIDER_TYPE.to_string(),
-                            raw_request: None,
-                            raw_response: None,
-                        })
-                    })?,
-            );
+        let mut form = Form::new().part(
+            "file",
+            Part::bytes(request.file.clone())
+                .file_name(request.filename.clone())
+                .mime_str("audio/mpeg")
+                .map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        status_code: None,
+                        message: format!("Failed to set MIME type: {e}"),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        raw_request: None,
+                        raw_response: None,
+                    })
+                })?,
+        );
 
         if let Some(prompt) = &request.prompt {
             form = form.text("prompt", prompt.clone());
@@ -739,8 +743,8 @@ impl AudioTranslationProvider for AzureProvider {
                 text: String,
             }
 
-            let response: AzureTranslationResponse = serde_json::from_str(&raw_response)
-                .map_err(|e| {
+            let response: AzureTranslationResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
                     Error::new(ErrorDetails::InferenceServer {
                         message: format!(
                             "Error parsing JSON response: {}",
@@ -824,14 +828,17 @@ impl TextToSpeechProvider for AzureProvider {
                 crate::audio::AudioVoice::Verse => "verse".to_string(),
                 crate::audio::AudioVoice::Other(voice) => voice.clone(),
             },
-            response_format: request.response_format.as_ref().map(|f| match f {
-                AudioOutputFormat::Mp3 => "mp3",
-                AudioOutputFormat::Opus => "opus",
-                AudioOutputFormat::Aac => "aac",
-                AudioOutputFormat::Flac => "flac",
-                AudioOutputFormat::Wav => "wav",
-                AudioOutputFormat::Pcm => "pcm",
-            }.to_string()),
+            response_format: request.response_format.as_ref().map(|f| {
+                match f {
+                    AudioOutputFormat::Mp3 => "mp3",
+                    AudioOutputFormat::Opus => "opus",
+                    AudioOutputFormat::Aac => "aac",
+                    AudioOutputFormat::Flac => "flac",
+                    AudioOutputFormat::Wav => "wav",
+                    AudioOutputFormat::Pcm => "pcm",
+                }
+                .to_string()
+            }),
             speed: request.speed,
         };
 
@@ -875,7 +882,10 @@ impl TextToSpeechProvider for AzureProvider {
             Ok(TextToSpeechProviderResponse {
                 id: request.id,
                 audio_data: audio_data.to_vec(),
-                format: request.response_format.clone().unwrap_or(AudioOutputFormat::Mp3),
+                format: request
+                    .response_format
+                    .clone()
+                    .unwrap_or(AudioOutputFormat::Mp3),
                 created: current_timestamp(),
                 raw_request: serde_json::to_string(&request_body).unwrap_or_default(),
                 usage: Usage {
@@ -941,10 +951,13 @@ impl ImageGenerationProvider for AzureProvider {
             size: request.size.as_ref().map(|s| s.as_str().to_string()),
             quality: request.quality.as_ref().map(|q| q.as_str().to_string()),
             style: request.style.as_ref().map(|s| s.as_str().to_string()),
-            response_format: request.response_format.as_ref().map(|f| match f {
-                ImageResponseFormat::Url => "url",
-                ImageResponseFormat::B64Json => "b64_json",
-            }.to_string()),
+            response_format: request.response_format.as_ref().map(|f| {
+                match f {
+                    ImageResponseFormat::Url => "url",
+                    ImageResponseFormat::B64Json => "b64_json",
+                }
+                .to_string()
+            }),
             user: request.user.clone(),
         };
 
@@ -995,8 +1008,8 @@ impl ImageGenerationProvider for AzureProvider {
                 revised_prompt: Option<String>,
             }
 
-            let response: AzureImageResponse = serde_json::from_str(&raw_response)
-                .map_err(|e| {
+            let response: AzureImageResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
                     Error::new(ErrorDetails::InferenceServer {
                         message: format!(
                             "Error parsing JSON response: {}",
@@ -1015,15 +1028,19 @@ impl ImageGenerationProvider for AzureProvider {
             Ok(ImageGenerationProviderResponse {
                 id: request.id,
                 created: response.created,
-                data: response.data.into_iter().map(|d| ImageData {
-                    url: d.url,
-                    b64_json: d.b64_json,
-                    revised_prompt: d.revised_prompt,
-                }).collect(),
+                data: response
+                    .data
+                    .into_iter()
+                    .map(|d| ImageData {
+                        url: d.url,
+                        b64_json: d.b64_json,
+                        revised_prompt: d.revised_prompt,
+                    })
+                    .collect(),
                 raw_request: serde_json::to_string(&request_body).unwrap_or_default(),
                 raw_response,
                 usage: Usage {
-                    input_tokens: 0,  // Azure doesn't provide token usage for images
+                    input_tokens: 0, // Azure doesn't provide token usage for images
                     output_tokens: 0,
                 },
                 latency,
@@ -1375,7 +1392,6 @@ impl<'a> TryFrom<AzureResponseWithMetadata<'a>> for ProviderInferenceResponse {
         ))
     }
 }
-
 
 #[cfg(test)]
 mod tests {
