@@ -411,6 +411,9 @@ impl<'c> Config<'c> {
                                 let model_provider = ModelProvider {
                                     name: provider_name.clone(),
                                     config: match provider_config {
+                                        crate::embeddings::EmbeddingProviderConfig::Azure(p) => {
+                                            ProviderConfig::Azure(p)
+                                        }
                                         crate::embeddings::EmbeddingProviderConfig::OpenAI(p) => {
                                             ProviderConfig::OpenAI(p)
                                         }

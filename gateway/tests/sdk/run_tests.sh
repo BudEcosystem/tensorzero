@@ -23,7 +23,7 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --provider PROVIDER   Provider to test (openai, anthropic, fireworks, all, universal) [default: all]"
+    echo "  --provider PROVIDER   Provider to test (openai, anthropic, fireworks, azure, all, universal) [default: all]"
     echo "  --mode MODE          Test mode (ci, full) [default: ci]"
     echo "  --port PORT          Gateway port [default: 3001]"
     echo "  --compare            Run comparison tests (full mode only)"
@@ -35,6 +35,7 @@ usage() {
     echo "  $0 --provider openai --mode full  # Run full OpenAI tests"
     echo "  $0 --provider anthropic           # Run Anthropic CI tests"
     echo "  $0 --provider fireworks           # Run Fireworks CI tests"
+    echo "  $0 --provider azure               # Run Azure CI tests"
     echo "  $0 --provider universal           # Run universal SDK compatibility tests"
     echo "  $0 --demo                         # Run interactive SDK architecture demo"
     exit 0
@@ -76,8 +77,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate inputs
-if [[ ! "$PROVIDER" =~ ^(openai|anthropic|fireworks|all|universal)$ ]]; then
-    echo -e "${RED}Error: Invalid provider '$PROVIDER'. Must be openai, anthropic, fireworks, all, or universal.${NC}"
+if [[ ! "$PROVIDER" =~ ^(openai|anthropic|fireworks|azure|all|universal)$ ]]; then
+    echo -e "${RED}Error: Invalid provider '$PROVIDER'. Must be openai, anthropic, fireworks, azure, all, or universal.${NC}"
     exit 1
 fi
 
@@ -127,6 +128,7 @@ if [ "$MODE" == "ci" ]; then
     export TENSORZERO_API_KEY="test-api-key"
     export OPENAI_API_KEY="dummy-key"
     export ANTHROPIC_API_KEY="dummy-key"
+    export AZURE_OPENAI_API_KEY="dummy-key"
 else
     # Full mode - check for .env file
     if [ ! -f ".env" ]; then
@@ -151,6 +153,11 @@ else
     
     if [[ "$PROVIDER" == "fireworks" || "$PROVIDER" == "all" ]] && [ -z "$FIREWORKS_API_KEY" ]; then
         echo -e "${RED}Error: FIREWORKS_API_KEY is not set!${NC}"
+        exit 1
+    fi
+    
+    if [[ "$PROVIDER" == "azure" || "$PROVIDER" == "all" ]] && [ -z "$AZURE_OPENAI_API_KEY" ]; then
+        echo -e "${RED}Error: AZURE_OPENAI_API_KEY is not set!${NC}"
         exit 1
     fi
 fi
@@ -196,7 +203,7 @@ run_provider_tests() {
     local test_dir="${provider}_tests/"
     local test_pattern=""
     
-    # Special handling for Fireworks provider
+    # Special handling for Fireworks and Azure providers
     if [ "$provider" == "fireworks" ]; then
         echo -e "${YELLOW}Running Fireworks parameter tests...${NC}"
         if [ "$MODE" == "ci" ]; then
@@ -205,6 +212,21 @@ run_provider_tests() {
             python fireworks_tests/test_fireworks_params.py
         fi
         return $?
+    elif [ "$provider" == "azure" ]; then
+        echo -e "${YELLOW}Running Azure model tests via OpenAI SDK...${NC}"
+        if [ "$MODE" == "ci" ]; then
+            python azure_tests/test_ci_azure.py
+            exit_code=$?
+            echo -e "${BLUE}Note: Azure models are tested via OpenAI SDK since TensorZero provides OpenAI-compatible endpoints.${NC}"
+            echo -e "${BLUE}Azure SDK with Azure-specific URL patterns is not supported.${NC}"
+            return $exit_code
+        else
+            python azure_tests/test_azure_sdk_params.py
+            exit_code=$?
+            echo -e "${BLUE}Note: Azure models are tested via OpenAI SDK since TensorZero provides OpenAI-compatible endpoints.${NC}"
+            echo -e "${BLUE}Azure SDK with Azure-specific URL patterns is not supported.${NC}"
+            return $exit_code
+        fi
     else
         # Standard pytest for other providers
         if [ "$MODE" == "ci" ]; then
@@ -280,7 +302,7 @@ if [ "$PROVIDER" == "universal" ]; then
     fi
 elif [ "$PROVIDER" == "all" ]; then
     # Test all providers
-    for p in openai anthropic fireworks; do
+    for p in openai anthropic fireworks azure; do
         echo -e "\n${BLUE}================================${NC}"
         echo -e "${BLUE}Testing provider: $p${NC}"
         echo -e "${BLUE}================================${NC}"
