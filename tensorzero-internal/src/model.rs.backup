@@ -118,9 +118,9 @@ impl ModelConfig {
     ) -> Result<crate::embeddings::EmbeddingResponse, Error> {
         // Verify this model supports embeddings
         if !self.supports_endpoint(EndpointCapability::Embedding) {
-            return Err(Error::new(ErrorDetails::ModelNotConfiguredForCapability {
-                model_name: model_name.to_string(),
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::Embedding.as_str().to_string(),
+                provider: model_name.to_string(),
             }));
         }
 
@@ -1090,6 +1090,323 @@ impl ModelConfig {
             provider_errors,
         }))
     }
+
+    /// Batch file upload method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn upload_batch_file(
+        &self,
+        content: Vec<u8>,
+        filename: String,
+        purpose: String,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .upload_batch_file(content.clone(), filename.clone(), purpose.clone(), clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Batch creation method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn create_batch(
+        &self,
+        input_file_id: String,
+        endpoint: String,
+        completion_window: String,
+        metadata: Option<HashMap<String, String>>,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .create_batch(input_file_id.clone(), endpoint.clone(), completion_window.clone(), metadata.clone(), clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Get batch status method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn get_batch(
+        &self,
+        batch_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .get_batch(batch_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Get batch file method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn get_batch_file(
+        &self,
+        file_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .get_file(file_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Get batch file content method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn get_batch_file_content(
+        &self,
+        file_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<Vec<u8>, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .get_file_content(file_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Delete batch file method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn delete_batch_file(
+        &self,
+        file_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .delete_file(file_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// List batches method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn list_batches(
+        &self,
+        params: crate::openai_batch::ListBatchesParams,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::ListBatchesResponse, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .list_batches(params.clone(), clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
+
+    /// Cancel batch method (when model supports batch capability)
+    #[instrument(skip_all)]
+    pub async fn cancel_batch(
+        &self,
+        batch_id: &str,
+        model_name: &str,
+        clients: &InferenceClients<'_>,
+    ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
+        // Verify this model supports batch operations
+        if !self.supports_endpoint(EndpointCapability::Batch) {
+            return Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::Batch.as_str().to_string(),
+                provider: model_name.to_string(),
+            }));
+        }
+
+        let mut provider_errors: HashMap<String, Error> = HashMap::new();
+        for provider_name in &self.routing {
+            let provider = self.providers.get(provider_name).ok_or_else(|| {
+                Error::new(ErrorDetails::ProviderNotFound {
+                    provider_name: provider_name.to_string(),
+                })
+            })?;
+
+            let response = provider
+                .cancel_batch(batch_id, clients.http_client, clients.credentials)
+                .await;
+            match response {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    provider_errors.insert(provider_name.to_string(), error);
+                }
+            }
+        }
+        Err(ErrorDetails::ModelProvidersExhausted { provider_errors }.into())
+    }
 }
 
 async fn stream_with_cache_write(
@@ -1949,22 +2266,10 @@ impl ModelProvider {
         use crate::embeddings::EmbeddingProvider;
 
         match &self.config {
-            ProviderConfig::Azure(provider) => {
-                provider.embed(request, client, dynamic_api_keys).await
-            }
             ProviderConfig::OpenAI(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             ProviderConfig::VLLM(provider) => {
-                provider.embed(request, client, dynamic_api_keys).await
-            }
-            ProviderConfig::Together(provider) => {
-                provider.embed(request, client, dynamic_api_keys).await
-            }
-            ProviderConfig::Fireworks(provider) => {
-                provider.embed(request, client, dynamic_api_keys).await
-            }
-            ProviderConfig::Mistral(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
@@ -1990,13 +2295,7 @@ impl ModelProvider {
         use crate::audio::AudioTranscriptionProvider;
 
         match &self.config {
-            ProviderConfig::Azure(provider) => {
-                provider.transcribe(request, client, dynamic_api_keys).await
-            }
             ProviderConfig::OpenAI(provider) => {
-                provider.transcribe(request, client, dynamic_api_keys).await
-            }
-            ProviderConfig::Fireworks(provider) => {
                 provider.transcribe(request, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
@@ -2022,13 +2321,7 @@ impl ModelProvider {
         use crate::audio::AudioTranslationProvider;
 
         match &self.config {
-            ProviderConfig::Azure(provider) => {
-                provider.translate(request, client, dynamic_api_keys).await
-            }
             ProviderConfig::OpenAI(provider) => {
-                provider.translate(request, client, dynamic_api_keys).await
-            }
-            ProviderConfig::Fireworks(provider) => {
                 provider.translate(request, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
@@ -2054,17 +2347,7 @@ impl ModelProvider {
         use crate::audio::TextToSpeechProvider;
 
         match &self.config {
-            ProviderConfig::Azure(provider) => {
-                provider
-                    .generate_speech(request, client, dynamic_api_keys)
-                    .await
-            }
             ProviderConfig::OpenAI(provider) => {
-                provider
-                    .generate_speech(request, client, dynamic_api_keys)
-                    .await
-            }
-            ProviderConfig::Together(provider) => {
                 provider
                     .generate_speech(request, client, dynamic_api_keys)
                     .await
@@ -2094,27 +2377,7 @@ impl ModelProvider {
         use crate::images::ImageGenerationProvider;
 
         match &self.config {
-            ProviderConfig::Azure(provider) => {
-                provider
-                    .generate_image(request, client, dynamic_api_keys)
-                    .await
-            }
             ProviderConfig::OpenAI(provider) => {
-                provider
-                    .generate_image(request, client, dynamic_api_keys)
-                    .await
-            }
-            ProviderConfig::Together(provider) => {
-                provider
-                    .generate_image(request, client, dynamic_api_keys)
-                    .await
-            }
-            ProviderConfig::XAI(provider) => {
-                provider
-                    .generate_image(request, client, dynamic_api_keys)
-                    .await
-            }
-            ProviderConfig::Fireworks(provider) => {
                 provider
                     .generate_image(request, client, dynamic_api_keys)
                     .await
@@ -2368,6 +2631,7 @@ impl ModelProvider {
         }
     }
 
+<<<<<<< HEAD
     /// Upload batch file method
     #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_upload_batch_file"))]
     pub async fn upload_batch_file(
@@ -2379,27 +2643,52 @@ impl ModelProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<crate::openai_batch::OpenAIFileObject, Error> {
         use crate::inference::providers::batch::BatchProvider;
+=======
+    /// Realtime session creation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_realtime_session"))]
+    pub async fn create_realtime_session(
+        &self,
+        request: &crate::realtime::RealtimeSessionRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::realtime::RealtimeSessionResponse, Error> {
+        use crate::realtime::RealtimeSessionProvider;
+>>>>>>> 54e6fa86b9865cdd5cc65c70e0f4dd3c6423b6fc
 
         match &self.config {
             ProviderConfig::OpenAI(provider) => {
                 provider
+<<<<<<< HEAD
                     .upload_file(content, filename, purpose, client, dynamic_api_keys)
+=======
+                    .create_session(request, client, dynamic_api_keys)
+>>>>>>> 54e6fa86b9865cdd5cc65c70e0f4dd3c6423b6fc
                     .await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
                 provider
+<<<<<<< HEAD
                     .upload_file(content, filename, purpose, client, dynamic_api_keys)
                     .await
             }
             // Other providers don't support batch operations yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::Batch.as_str().to_string(),
+=======
+                    .create_session(request, client, dynamic_api_keys)
+                    .await
+            }
+            // Other providers don't support realtime sessions yet
+            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
+                capability: EndpointCapability::RealtimeSession.as_str().to_string(),
+>>>>>>> 54e6fa86b9865cdd5cc65c70e0f4dd3c6423b6fc
                 provider: self.name.to_string(),
             })),
         }
     }
 
+<<<<<<< HEAD
     /// Create batch method
     #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_batch"))]
     pub async fn create_batch(
@@ -2412,31 +2701,33 @@ impl ModelProvider {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<crate::openai_batch::OpenAIBatchObject, Error> {
         use crate::inference::providers::batch::BatchProvider;
+=======
+    /// Realtime transcription session creation method
+    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_realtime_transcription_session"))]
+    pub async fn create_realtime_transcription_session(
+        &self,
+        request: &crate::realtime::RealtimeTranscriptionRequest,
+        client: &Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<crate::realtime::RealtimeTranscriptionResponse, Error> {
+        use crate::realtime::RealtimeTranscriptionProvider;
+>>>>>>> 54e6fa86b9865cdd5cc65c70e0f4dd3c6423b6fc
 
         match &self.config {
             ProviderConfig::OpenAI(provider) => {
                 provider
-                    .create_batch(
-                        input_file_id,
-                        endpoint,
-                        completion_window,
-                        metadata,
-                        client,
-                        dynamic_api_keys,
-                    )
+<<<<<<< HEAD
+                    .create_batch(input_file_id, endpoint, completion_window, metadata, client, dynamic_api_keys)
+=======
+                    .create_transcription_session(request, client, dynamic_api_keys)
+>>>>>>> 54e6fa86b9865cdd5cc65c70e0f4dd3c6423b6fc
                     .await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
                 provider
-                    .create_batch(
-                        input_file_id,
-                        endpoint,
-                        completion_window,
-                        metadata,
-                        client,
-                        dynamic_api_keys,
-                    )
+<<<<<<< HEAD
+                    .create_batch(input_file_id, endpoint, completion_window, metadata, client, dynamic_api_keys)
                     .await
             }
             // Other providers don't support batch operations yet
@@ -2459,11 +2750,15 @@ impl ModelProvider {
 
         match &self.config {
             ProviderConfig::OpenAI(provider) => {
-                provider.get_batch(batch_id, client, dynamic_api_keys).await
+                provider
+                    .get_batch(batch_id, client, dynamic_api_keys)
+                    .await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
-                provider.get_batch(batch_id, client, dynamic_api_keys).await
+                provider
+                    .get_batch(batch_id, client, dynamic_api_keys)
+                    .await
             }
             // Other providers don't support batch operations yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
@@ -2485,11 +2780,15 @@ impl ModelProvider {
 
         match &self.config {
             ProviderConfig::OpenAI(provider) => {
-                provider.get_file(file_id, client, dynamic_api_keys).await
+                provider
+                    .get_file(file_id, client, dynamic_api_keys)
+                    .await
             }
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => {
-                provider.get_file(file_id, client, dynamic_api_keys).await
+                provider
+                    .get_file(file_id, client, dynamic_api_keys)
+                    .await
             }
             // Other providers don't support batch operations yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
@@ -2614,60 +2913,7 @@ impl ModelProvider {
             // Other providers don't support batch operations yet
             _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
                 capability: EndpointCapability::Batch.as_str().to_string(),
-                provider: self.name.to_string(),
-            })),
-        }
-    }
-
-    /// Realtime session creation method
-    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_realtime_session"))]
-    pub async fn create_realtime_session(
-        &self,
-        request: &crate::realtime::RealtimeSessionRequest,
-        client: &Client,
-        dynamic_api_keys: &InferenceCredentials,
-    ) -> Result<crate::realtime::RealtimeSessionResponse, Error> {
-        use crate::realtime::RealtimeSessionProvider;
-
-        match &self.config {
-            ProviderConfig::OpenAI(provider) => {
-                provider
-                    .create_session(request, client, dynamic_api_keys)
-                    .await
-            }
-            #[cfg(any(test, feature = "e2e_tests"))]
-            ProviderConfig::Dummy(provider) => {
-                provider
-                    .create_session(request, client, dynamic_api_keys)
-                    .await
-            }
-            // Other providers don't support realtime sessions yet
-            _ => Err(Error::new(ErrorDetails::CapabilityNotSupported {
-                capability: EndpointCapability::RealtimeSession.as_str().to_string(),
-                provider: self.name.to_string(),
-            })),
-        }
-    }
-
-    /// Realtime transcription session creation method
-    #[tracing::instrument(skip_all, fields(provider_name = &*self.name, otel.name = "model_provider_create_realtime_transcription_session"))]
-    pub async fn create_realtime_transcription_session(
-        &self,
-        request: &crate::realtime::RealtimeTranscriptionRequest,
-        client: &Client,
-        dynamic_api_keys: &InferenceCredentials,
-    ) -> Result<crate::realtime::RealtimeTranscriptionResponse, Error> {
-        use crate::realtime::RealtimeTranscriptionProvider;
-
-        match &self.config {
-            ProviderConfig::OpenAI(provider) => {
-                provider
-                    .create_transcription_session(request, client, dynamic_api_keys)
-                    .await
-            }
-            #[cfg(any(test, feature = "e2e_tests"))]
-            ProviderConfig::Dummy(provider) => {
-                provider
+=======
                     .create_transcription_session(request, client, dynamic_api_keys)
                     .await
             }
@@ -2676,6 +2922,7 @@ impl ModelProvider {
                 capability: EndpointCapability::RealtimeTranscription
                     .as_str()
                     .to_string(),
+>>>>>>> 54e6fa86b9865cdd5cc65c70e0f4dd3c6423b6fc
                 provider: self.name.to_string(),
             })),
         }
@@ -2947,9 +3194,9 @@ impl ModelTableExt for ModelTable {
             if model.supports_endpoint(capability) {
                 Ok(Some(model))
             } else {
-                Err(Error::new(ErrorDetails::ModelNotConfiguredForCapability {
-                    model_name: key.to_string(),
+                Err(Error::new(ErrorDetails::CapabilityNotSupported {
                     capability: capability.as_str().to_string(),
+                    provider: key.to_string(),
                 }))
             }
         } else {
@@ -4089,9 +4336,7 @@ mod tests {
                     .await;
                 assert!(result.is_err());
                 let error = result.unwrap_err();
-                assert!(error
-                    .to_string()
-                    .contains("is not configured to support capability"));
+                assert!(error.to_string().contains("does not support capability"));
 
                 // Test getting non-existent model
                 let result = model_table
@@ -4138,9 +4383,7 @@ mod tests {
         let result = model.embed(&request, "test_model", &clients).await;
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("is not configured to support capability"));
+        assert!(error.to_string().contains("does not support capability"));
     }
 
     #[traced_test]

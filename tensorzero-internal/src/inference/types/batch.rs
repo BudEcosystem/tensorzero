@@ -20,9 +20,17 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchStatus {
+    // Existing TensorZero statuses
     Pending,
     Completed,
     Failed,
+    // New OpenAI-compatible statuses
+    Validating,
+    InProgress,
+    Finalizing,
+    Expired,
+    Cancelling,
+    Cancelled,
 }
 
 /// Returned from start_batch_inference from an InferenceProvider
@@ -156,6 +164,27 @@ pub struct BatchRequestRow<'a> {
     pub function_name: Cow<'a, str>,
     pub variant_name: Cow<'a, str>,
     pub errors: Vec<Value>,
+    // OpenAI-specific fields
+    pub openai_batch_id: Option<String>,
+    pub completion_window: Option<String>,
+    pub input_file_id: Option<String>,
+    pub output_file_id: Option<String>,
+    pub error_file_id: Option<String>,
+    pub created_at: Option<i64>,
+    pub in_progress_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    pub finalizing_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub failed_at: Option<i64>,
+    pub expired_at: Option<i64>,
+    pub cancelling_at: Option<i64>,
+    pub cancelled_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_optional_json_string")]
+    pub request_counts: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_optional_json_string")]
+    pub metadata: Option<Value>,
 }
 
 pub fn deserialize_json_string<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -253,6 +282,23 @@ pub struct UnparsedBatchRequestRow<'a> {
     pub model_provider_name: &'a str,
     pub status: BatchStatus,
     pub errors: Vec<Value>,
+    // OpenAI-specific fields (optional for backward compatibility)
+    pub openai_batch_id: Option<String>,
+    pub completion_window: Option<String>,
+    pub input_file_id: Option<String>,
+    pub output_file_id: Option<String>,
+    pub error_file_id: Option<String>,
+    pub created_at: Option<i64>,
+    pub in_progress_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    pub finalizing_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub failed_at: Option<i64>,
+    pub expired_at: Option<i64>,
+    pub cancelling_at: Option<i64>,
+    pub cancelled_at: Option<i64>,
+    pub request_counts: Option<Value>,
+    pub metadata: Option<Value>,
 }
 
 impl<'a> BatchRequestRow<'a> {
@@ -268,6 +314,22 @@ impl<'a> BatchRequestRow<'a> {
             model_provider_name,
             status,
             errors,
+            openai_batch_id,
+            completion_window,
+            input_file_id,
+            output_file_id,
+            error_file_id,
+            created_at,
+            in_progress_at,
+            expires_at,
+            finalizing_at,
+            completed_at,
+            failed_at,
+            expired_at,
+            cancelling_at,
+            cancelled_at,
+            request_counts,
+            metadata,
         } = unparsed;
         let id = Uuid::now_v7();
         Self {
@@ -282,6 +344,22 @@ impl<'a> BatchRequestRow<'a> {
             model_provider_name: Cow::Borrowed(model_provider_name),
             status,
             errors,
+            openai_batch_id,
+            completion_window,
+            input_file_id,
+            output_file_id,
+            error_file_id,
+            created_at,
+            in_progress_at,
+            expires_at,
+            finalizing_at,
+            completed_at,
+            failed_at,
+            expired_at,
+            cancelling_at,
+            cancelled_at,
+            request_counts,
+            metadata,
         }
     }
 }
