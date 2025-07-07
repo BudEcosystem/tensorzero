@@ -253,13 +253,7 @@ jobs:
           echo "GATEWAY_PID=$!" >> $GITHUB_ENV
 
       - name: Test (Rust)
-        run: |
-          if [ "${{ matrix.clickhouse_version.tag }}" = "latest-alpine" ]; then
-            echo "Skipping concurrent migrations test for latest ClickHouse version"
-            cargo test-e2e-no-creds -- --skip test_concurrent_clickhouse_migrations
-          else
-            cargo test-e2e-no-creds
-          fi
+        run: cargo test-e2e-no-creds
 
       - name: Print e2e logs
         if: always()
