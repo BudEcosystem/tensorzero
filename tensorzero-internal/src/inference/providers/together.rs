@@ -1,3 +1,5 @@
+#![allow(clippy::allow_attributes)]
+
 use std::{borrow::Cow, sync::OnceLock, time::Duration};
 
 use futures::StreamExt;
@@ -11,6 +13,9 @@ use tokio::time::Instant;
 use url::Url;
 
 use crate::cache::ModelProviderRequest;
+use crate::embeddings::{
+    EmbeddingInput, EmbeddingProvider, EmbeddingProviderResponse, EmbeddingRequest,
+};
 use crate::error::DisplayOrDebugGateway;
 use crate::inference::types::{
     FinishReason, Latency, ModelInferenceRequest, ModelInferenceRequestJsonMode,
@@ -20,12 +25,19 @@ use crate::inference::types::{
 use crate::model::{build_creds_caching_default, Credential, CredentialLocation, ModelProvider};
 use crate::tool::ToolChoice;
 use crate::{
+    audio::{
+        AudioOutputFormat, AudioVoice, TextToSpeechProvider, TextToSpeechProviderResponse,
+        TextToSpeechRequest,
+    },
     endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails},
+    images::{
+        ImageData, ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
+    },
     inference::types::{
         batch::{BatchRequestRow, PollBatchInferenceResponse, StartBatchProviderInferenceResponse},
         ContentBlockChunk, ContentBlockOutput, ProviderInferenceResponseChunk,
-        ProviderInferenceResponseStreamInner, Text, TextChunk, Thought, ThoughtChunk,
+        ProviderInferenceResponseStreamInner, Text, TextChunk, Thought, ThoughtChunk, Usage,
     },
     tool::{ToolCall, ToolCallChunk},
 };
@@ -808,6 +820,515 @@ struct TogetherChatChunk {
     choices: Vec<TogetherChatChunkChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<OpenAIUsage>,
+}
+
+// Together Embedding types
+#[derive(Debug, Serialize)]
+struct TogetherEmbeddingRequest<'a> {
+    model: &'a str,
+    input: TogetherEmbeddingInput<'a>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum TogetherEmbeddingInput<'a> {
+    Single(&'a str),
+    Batch(Vec<&'a str>),
+}
+
+impl<'a> TogetherEmbeddingRequest<'a> {
+    fn new(model: &'a str, input: &'a EmbeddingInput) -> Self {
+        let input = match input {
+            EmbeddingInput::Single(text) => TogetherEmbeddingInput::Single(text),
+            EmbeddingInput::Batch(texts) => {
+                TogetherEmbeddingInput::Batch(texts.iter().map(|s| s.as_str()).collect())
+            }
+        };
+        Self { model, input }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TogetherEmbeddingResponse {
+    data: Vec<TogetherEmbeddingData>,
+    usage: OpenAIUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct TogetherEmbeddingData {
+    embedding: Vec<f32>,
+}
+
+fn get_embedding_url(base_url: &Url) -> Result<Url, Error> {
+    base_url.join("embeddings").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
+// Audio TTS types
+#[derive(Debug, Serialize)]
+struct TogetherTextToSpeechRequest<'a> {
+    model: Cow<'a, str>,
+    input: Cow<'a, str>,
+    voice: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
+}
+
+fn map_audio_voice_to_together(voice: &AudioVoice) -> Cow<'static, str> {
+    match voice {
+        AudioVoice::Alloy => Cow::Borrowed("helpful woman"),
+        AudioVoice::Echo => Cow::Borrowed("laidback woman"),
+        AudioVoice::Fable => Cow::Borrowed("meditation lady"),
+        AudioVoice::Onyx => Cow::Borrowed("newsman"),
+        AudioVoice::Nova => Cow::Borrowed("friendly sidekick"),
+        AudioVoice::Shimmer => Cow::Borrowed("british reading lady"),
+        AudioVoice::Ash => Cow::Borrowed("barbershop man"),
+        AudioVoice::Ballad => Cow::Borrowed("indian lady"),
+        AudioVoice::Coral => Cow::Borrowed("german conversational woman"),
+        AudioVoice::Sage => Cow::Borrowed("pilot over intercom"),
+        AudioVoice::Verse => Cow::Borrowed("australian customer support man"),
+        AudioVoice::Other(voice_name) => Cow::Owned(voice_name.clone()),
+    }
+}
+
+fn get_audio_speech_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("audio/generations").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
+// Image generation types
+#[derive(Debug, Serialize)]
+struct TogetherImageGenerationRequest {
+    model: String,
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    n: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    // Together-specific parameters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    steps: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disable_safety_checker: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TogetherImageResponse {
+    id: String,
+    model: String,
+    object: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<u64>,
+    data: Vec<TogetherImageData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TogetherImageData {
+    index: u32,
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    b64_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revised_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timings: Option<TogetherImageTimings>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TogetherImageTimings {
+    inference: f64,
+}
+
+fn get_image_generation_url(base_url: &Url) -> Result<Url, Error> {
+    let mut url = base_url.clone();
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url.join("images/generations").map_err(|e| {
+        Error::new(ErrorDetails::InvalidBaseUrl {
+            message: e.to_string(),
+        })
+    })
+}
+
+impl EmbeddingProvider for TogetherProvider {
+    async fn embed(
+        &self,
+        request: &EmbeddingRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<EmbeddingProviderResponse, Error> {
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let request_body = TogetherEmbeddingRequest::new(&self.model_name, &request.input);
+
+        // Serialize request body once at the beginning
+        let raw_request = serde_json::to_string(&request_body).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing request body as JSON: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
+        let request_url = get_embedding_url(&TOGETHER_API_BASE)?;
+        let start_time = Instant::now();
+
+        let request_builder = client
+            .post(request_url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret());
+
+        let res = request_builder
+            .body(raw_request.clone())
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!(
+                        "Error sending request to Together: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                })
+            })?;
+
+        let status = res.status();
+        if status.is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: TogetherEmbeddingResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(raw_request.clone()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+
+            let embeddings: Vec<Vec<f32>> = response
+                .data
+                .into_iter()
+                .map(|data| data.embedding)
+                .collect();
+
+            let usage = Usage::from(response.usage);
+
+            Ok(EmbeddingProviderResponse::new(
+                embeddings,
+                request.input.clone(),
+                raw_request,
+                raw_response,
+                usage,
+                latency,
+            ))
+        } else {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+            Err(handle_openai_error(
+                &raw_request,
+                status,
+                &raw_response,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Image generation implementation
+impl ImageGenerationProvider for TogetherProvider {
+    async fn generate_image(
+        &self,
+        request: &ImageGenerationRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<ImageGenerationProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_image_generation_url(&TOGETHER_API_BASE)?;
+
+        // Build Together-specific request
+        let together_request = TogetherImageGenerationRequest {
+            model: self.model_name.clone(),
+            prompt: request.prompt.clone(),
+            n: request.n,
+            size: request.size.as_ref().map(|s| s.as_str().to_string()),
+            response_format: request
+                .response_format
+                .as_ref()
+                .map(|f| f.as_str().to_string()),
+            user: request.user.clone(),
+            // Together-specific defaults
+            steps: None,                  // Let Together use default
+            disable_safety_checker: None, // Let Together use default
+        };
+
+        let request_json = serde_json::to_string(&together_request).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!("Failed to serialize Together image generation request: {e}"),
+            })
+        })?;
+
+        let request_builder = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret())
+            .body(request_json.clone());
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send Together image generation request: {e}"),
+                status_code: None,
+                raw_request: Some(request_json.clone()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let response_body = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to read Together image generation response: {e}"),
+                    status_code: None,
+                    raw_request: Some(request_json.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let response: TogetherImageResponse =
+                serde_json::from_str(&response_body).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceClient {
+                        message: format!("Failed to parse Together image generation response: {e}"),
+                        status_code: None,
+                        raw_request: Some(request_json.clone()),
+                        raw_response: Some(response_body.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                    })
+                })?;
+
+            Ok(ImageGenerationProviderResponse {
+                id: request.id,
+                created: response.created.unwrap_or_else(|| {
+                    // Use current timestamp if not provided
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                }),
+                data: response
+                    .data
+                    .into_iter()
+                    .map(|d| ImageData {
+                        url: d.url,
+                        b64_json: d.b64_json,
+                        revised_prompt: d.revised_prompt,
+                    })
+                    .collect(),
+                raw_request: request_json,
+                raw_response: response_body,
+                usage: Usage {
+                    input_tokens: 0, // Together doesn't provide token usage for images
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            let status = res.status();
+            let error_body = res.text().await.unwrap_or_else(|e| {
+                tracing::error!("Failed to read error response body: {}", e);
+                "Failed to read error response".to_string()
+            });
+            Err(handle_openai_error(
+                &request_json,
+                status,
+                &error_body,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
+}
+
+// Text-to-Speech implementation
+impl TextToSpeechProvider for TogetherProvider {
+    async fn generate_speech(
+        &self,
+        request: &TextToSpeechRequest,
+        client: &reqwest::Client,
+        dynamic_api_keys: &InferenceCredentials,
+    ) -> Result<TextToSpeechProviderResponse, Error> {
+        let start_time = Instant::now();
+        let api_key = self.credentials.get_api_key(dynamic_api_keys)?;
+        let url = get_audio_speech_url(&TOGETHER_API_BASE)?;
+
+        // Validate input
+        if request.input.trim().is_empty() {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "Input text cannot be empty".to_string(),
+            }));
+        }
+
+        // Validate input length (Together's limit is typically around 4096 characters)
+        const MAX_INPUT_LENGTH: usize = 4096;
+        if request.input.len() > MAX_INPUT_LENGTH {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Input text is too long: {} characters. Maximum allowed: {} characters",
+                    request.input.len(),
+                    MAX_INPUT_LENGTH
+                ),
+            }));
+        }
+
+        // Map output format
+        let response_format = match &request.response_format {
+            Some(AudioOutputFormat::Mp3) | None => Some("mp3"),
+            Some(AudioOutputFormat::Pcm) => Some("raw"),
+            Some(format) => {
+                return Err(Error::new(ErrorDetails::InvalidRequest {
+                    message: format!(
+                        "Together TTS does not support output format: {format:?}. Supported formats: mp3, raw (pcm)"
+                    ),
+                }));
+            }
+        };
+
+        // Build Together-specific request
+        let together_request = TogetherTextToSpeechRequest {
+            model: Cow::Borrowed(&self.model_name),
+            input: Cow::Borrowed(&request.input),
+            voice: map_audio_voice_to_together(&request.voice),
+            response_format,
+            sample_rate: Some(44100), // Recommended sample rate
+            stream: Some(false),      // TODO: Add streaming support in the future
+        };
+
+        let request_json = serde_json::to_string(&together_request).map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!("Failed to serialize Together TTS request: {e}"),
+            })
+        })?;
+
+        let request_builder = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .bearer_auth(api_key.expose_secret())
+            .body(request_json.clone());
+
+        let res = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                message: format!("Failed to send Together TTS request: {e}"),
+                status_code: e.status(),
+                raw_request: Some(request_json.clone()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+
+        let latency = Latency::NonStreaming {
+            response_time: start_time.elapsed(),
+        };
+
+        if res.status().is_success() {
+            let audio_data = res.bytes().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    message: format!("Failed to read Together TTS response: {e}"),
+                    status_code: None,
+                    raw_request: Some(request_json.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                })
+            })?;
+
+            let output_format = request
+                .response_format
+                .clone()
+                .unwrap_or(AudioOutputFormat::Mp3);
+
+            Ok(TextToSpeechProviderResponse {
+                id: request.id,
+                audio_data: audio_data.to_vec(),
+                format: output_format,
+                created: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                raw_request: request_json,
+                usage: Usage {
+                    input_tokens: 0, // Together doesn't provide token usage for TTS
+                    output_tokens: 0,
+                },
+                latency,
+            })
+        } else {
+            let status = res.status();
+            let error_body = res.text().await.unwrap_or_else(|e| {
+                tracing::error!("Failed to read error response body: {}", e);
+                "Failed to read error response".to_string()
+            });
+            Err(handle_openai_error(
+                &request_json,
+                status,
+                &error_body,
+                PROVIDER_TYPE,
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1600,5 +2121,403 @@ mod tests {
                 id: "0".to_string(),
             })]
         );
+    }
+
+    #[test]
+    fn test_together_embedding_request_new() {
+        use crate::embeddings::{EmbeddingInput, EmbeddingRequest};
+
+        // Test single input
+        let single_input = EmbeddingInput::Single("Hello, world!".to_string());
+        let request = EmbeddingRequest {
+            input: single_input,
+            encoding_format: None,
+        };
+        let together_request =
+            TogetherEmbeddingRequest::new("BAAI/bge-base-en-v1.5", &request.input);
+
+        assert_eq!(together_request.model, "BAAI/bge-base-en-v1.5");
+        assert!(matches!(
+            together_request.input,
+            TogetherEmbeddingInput::Single("Hello, world!")
+        ));
+
+        // Test batch input
+        let batch_input =
+            EmbeddingInput::Batch(vec!["First text".to_string(), "Second text".to_string()]);
+        let request = EmbeddingRequest {
+            input: batch_input,
+            encoding_format: Some("float".to_string()),
+        };
+        let together_request = TogetherEmbeddingRequest::new(
+            "togethercomputer/m2-bert-80M-8k-retrieval",
+            &request.input,
+        );
+
+        assert_eq!(
+            together_request.model,
+            "togethercomputer/m2-bert-80M-8k-retrieval"
+        );
+        match together_request.input {
+            TogetherEmbeddingInput::Batch(texts) => {
+                assert_eq!(texts.len(), 2);
+                assert_eq!(texts[0], "First text");
+                assert_eq!(texts[1], "Second text");
+            }
+            _ => panic!("Expected batch input"),
+        }
+    }
+
+    #[test]
+    fn test_together_embedding_response_parsing() {
+        let json_response = r#"{
+            "data": [
+                {
+                    "index": 0,
+                    "object": "embedding",
+                    "embedding": [0.1, 0.2, 0.3]
+                },
+                {
+                    "index": 1,
+                    "object": "embedding",
+                    "embedding": [0.4, 0.5, 0.6]
+                }
+            ],
+            "model": "BAAI/bge-base-en-v1.5",
+            "object": "list",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 0,
+                "total_tokens": 10
+            }
+        }"#;
+
+        let response: TogetherEmbeddingResponse = serde_json::from_str(json_response).unwrap();
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+        assert_eq!(response.data[1].embedding, vec![0.4, 0.5, 0.6]);
+        assert_eq!(response.usage.prompt_tokens, 10);
+        assert_eq!(response.usage.total_tokens, 10);
+    }
+
+    #[tokio::test]
+    async fn test_together_image_generation_request_serialization() {
+        use crate::images::{ImageGenerationRequest, ImageResponseFormat, ImageSize};
+        use std::sync::Arc;
+
+        // Set up test environment variable
+        std::env::set_var("TEST_TOGETHER_API_KEY", "test-api-key");
+
+        let provider = TogetherProvider::new(
+            "black-forest-labs/FLUX.1-schnell".to_string(),
+            Some(CredentialLocation::Env("TEST_TOGETHER_API_KEY".to_string())),
+            false,
+        )
+        .unwrap();
+
+        let request = ImageGenerationRequest {
+            id: Uuid::now_v7(),
+            prompt: "A beautiful sunset over mountains".to_string(),
+            model: Arc::from("flux-schnell"),
+            n: Some(1),
+            size: Some(ImageSize::Size1024x1024),
+            quality: None,
+            style: None,
+            response_format: Some(ImageResponseFormat::Url),
+            user: Some("test-user".to_string()),
+            background: None,
+            moderation: None,
+            output_compression: None,
+            output_format: None,
+        };
+
+        // Create the Together-specific request
+        let together_request = TogetherImageGenerationRequest {
+            model: provider.model_name().to_string(),
+            prompt: request.prompt.clone(),
+            n: request.n,
+            size: request.size.as_ref().map(|s| s.as_str().to_string()),
+            response_format: request
+                .response_format
+                .as_ref()
+                .map(|f| f.as_str().to_string()),
+            user: request.user.clone(),
+            steps: None,
+            disable_safety_checker: None,
+        };
+
+        // Test serialization
+        let serialized = serde_json::to_string(&together_request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "black-forest-labs/FLUX.1-schnell");
+        assert_eq!(parsed["prompt"], "A beautiful sunset over mountains");
+        assert_eq!(parsed["n"], 1);
+        assert_eq!(parsed["size"], "1024x1024");
+        assert_eq!(parsed["response_format"], "url");
+        assert_eq!(parsed["user"], "test-user");
+        assert!(parsed.get("steps").is_none());
+        assert!(parsed.get("disable_safety_checker").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_together_image_response_parsing() {
+        // Test with actual Together API response format
+        let response_json = r#"{
+            "id": "o1TnXqu-2kFHot-958e7e079b9d47e3-PDX",
+            "model": "black-forest-labs/FLUX.1-schnell",
+            "object": "list",
+            "data": [
+                {
+                    "index": 0,
+                    "url": "https://api.together.ai/shrt/vcu2cXNQebqphdfe",
+                    "timings": {
+                        "inference": 0.29318173974752426
+                    }
+                }
+            ]
+        }"#;
+
+        let response: TogetherImageResponse = serde_json::from_str(response_json).unwrap();
+
+        assert_eq!(response.id, "o1TnXqu-2kFHot-958e7e079b9d47e3-PDX");
+        assert_eq!(response.model, "black-forest-labs/FLUX.1-schnell");
+        assert_eq!(response.object, "list");
+        assert_eq!(response.created, None);
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(response.data[0].index, 0);
+        assert_eq!(
+            response.data[0].url,
+            Some("https://api.together.ai/shrt/vcu2cXNQebqphdfe".to_string())
+        );
+        assert_eq!(response.data[0].b64_json, None);
+        assert_eq!(response.data[0].revised_prompt, None);
+        assert!(response.data[0].timings.is_some());
+        assert_eq!(
+            response.data[0].timings.as_ref().unwrap().inference,
+            0.29318173974752426
+        );
+
+        // Test with created field present (backward compatibility)
+        let response_with_created = r#"{
+            "id": "test-id",
+            "model": "black-forest-labs/FLUX.1-schnell",
+            "object": "list",
+            "created": 1234567890,
+            "data": [
+                {
+                    "index": 0,
+                    "url": "https://example.com/image.png"
+                }
+            ]
+        }"#;
+
+        let response2: TogetherImageResponse = serde_json::from_str(response_with_created).unwrap();
+        assert_eq!(response2.created, Some(1234567890));
+    }
+
+    #[test]
+    fn test_map_audio_voice_to_together() {
+        // Test all voice mappings
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Alloy),
+            "helpful woman"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Echo),
+            "laidback woman"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Fable),
+            "meditation lady"
+        );
+        assert_eq!(map_audio_voice_to_together(&AudioVoice::Onyx), "newsman");
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Nova),
+            "friendly sidekick"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Shimmer),
+            "british reading lady"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Ash),
+            "barbershop man"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Ballad),
+            "indian lady"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Coral),
+            "german conversational woman"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Sage),
+            "pilot over intercom"
+        );
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Verse),
+            "australian customer support man"
+        );
+
+        // Test Other variant
+        assert_eq!(
+            map_audio_voice_to_together(&AudioVoice::Other("custom voice".to_string())),
+            "custom voice"
+        );
+    }
+
+    #[test]
+    fn test_together_tts_request_serialization() {
+        let request = TogetherTextToSpeechRequest {
+            model: Cow::Borrowed("cartesia/sonic"),
+            input: Cow::Borrowed("Hello, world!"),
+            voice: Cow::Borrowed("helpful woman"),
+            response_format: Some("mp3"),
+            sample_rate: Some(44100),
+            stream: Some(false),
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "cartesia/sonic");
+        assert_eq!(parsed["input"], "Hello, world!");
+        assert_eq!(parsed["voice"], "helpful woman");
+        assert_eq!(parsed["response_format"], "mp3");
+        assert_eq!(parsed["sample_rate"], 44100);
+        assert_eq!(parsed["stream"], false);
+    }
+
+    #[test]
+    fn test_together_tts_request_serialization_minimal() {
+        let request = TogetherTextToSpeechRequest {
+            model: Cow::Borrowed("cartesia/sonic"),
+            input: Cow::Borrowed("Test"),
+            voice: Cow::Borrowed("newsman"),
+            response_format: None,
+            sample_rate: None,
+            stream: None,
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(parsed["model"], "cartesia/sonic");
+        assert_eq!(parsed["input"], "Test");
+        assert_eq!(parsed["voice"], "newsman");
+        assert!(parsed.get("response_format").is_none());
+        assert!(parsed.get("sample_rate").is_none());
+        assert!(parsed.get("stream").is_none());
+    }
+
+    #[test]
+    fn test_get_audio_speech_url() {
+        let base_url = Url::parse("https://api.together.xyz/v1").unwrap();
+        let audio_url = get_audio_speech_url(&base_url).unwrap();
+        assert_eq!(
+            audio_url.as_str(),
+            "https://api.together.xyz/v1/audio/generations"
+        );
+
+        // Test with base URL that has trailing slash
+        let base_url_with_slash = Url::parse("https://api.together.xyz/v1/").unwrap();
+        let audio_url_with_slash = get_audio_speech_url(&base_url_with_slash).unwrap();
+        assert_eq!(
+            audio_url_with_slash.as_str(),
+            "https://api.together.xyz/v1/audio/generations"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_together_tts_provider() {
+        use crate::audio::{AudioOutputFormat, AudioVoice, TextToSpeechRequest};
+        use std::sync::Arc;
+
+        // Set up test environment variable
+        std::env::set_var("TEST_TOGETHER_API_KEY", "test-api-key");
+
+        let provider = TogetherProvider::new(
+            "cartesia/sonic".to_string(),
+            Some(CredentialLocation::Env("TEST_TOGETHER_API_KEY".to_string())),
+            false,
+        )
+        .unwrap();
+
+        let _request = TextToSpeechRequest {
+            id: Uuid::now_v7(),
+            input: "Hello, this is a test".to_string(),
+            model: Arc::from("cartesia/sonic"),
+            voice: AudioVoice::Alloy,
+            response_format: Some(AudioOutputFormat::Mp3),
+            speed: None,
+        };
+
+        // Test request building - we can't easily test the full provider without mocking
+        // but we can test that the provider is set up correctly
+        assert_eq!(provider.model_name(), "cartesia/sonic");
+    }
+
+    #[tokio::test]
+    async fn test_together_tts_input_validation() {
+        use crate::endpoints::inference::InferenceCredentials;
+        use std::sync::Arc;
+
+        // Set up test environment variable
+        std::env::set_var("TEST_TOGETHER_API_KEY", "test-api-key");
+
+        let provider = TogetherProvider::new(
+            "cartesia/sonic".to_string(),
+            Some(CredentialLocation::Env("TEST_TOGETHER_API_KEY".to_string())),
+            false,
+        )
+        .unwrap();
+
+        let client = reqwest::Client::new();
+        let dynamic_api_keys = InferenceCredentials::default();
+
+        // Test empty input
+        let empty_request = TextToSpeechRequest {
+            id: Uuid::now_v7(),
+            input: "   ".to_string(), // Only whitespace
+            model: Arc::from("cartesia/sonic"),
+            voice: AudioVoice::Alloy,
+            response_format: Some(AudioOutputFormat::Mp3),
+            speed: None,
+        };
+
+        let result = provider
+            .generate_speech(&empty_request, &client, &dynamic_api_keys)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(matches!(
+            error.get_details(),
+            ErrorDetails::InvalidRequest { message } if message.contains("Input text cannot be empty")
+        ));
+
+        // Test input that's too long
+        let long_input = "a".repeat(5000); // Exceeds 4096 character limit
+        let long_request = TextToSpeechRequest {
+            id: Uuid::now_v7(),
+            input: long_input,
+            model: Arc::from("cartesia/sonic"),
+            voice: AudioVoice::Alloy,
+            response_format: Some(AudioOutputFormat::Mp3),
+            speed: None,
+        };
+
+        let result = provider
+            .generate_speech(&long_request, &client, &dynamic_api_keys)
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(matches!(
+            error.get_details(),
+            ErrorDetails::InvalidRequest { message } if message.contains("Input text is too long")
+        ));
     }
 }

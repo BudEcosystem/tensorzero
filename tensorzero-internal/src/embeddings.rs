@@ -15,7 +15,10 @@ use crate::{
     endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails},
     inference::{
-        providers::{openai::OpenAIProvider, vllm::VLLMProvider},
+        providers::{
+            azure::AzureProvider, fireworks::FireworksProvider, openai::OpenAIProvider,
+            together::TogetherProvider, vllm::VLLMProvider,
+        },
         types::{
             current_timestamp, Latency, ModelInferenceResponseWithMetadata, RequestMessage, Role,
             Usage,
@@ -34,7 +37,13 @@ use crate::inference::providers::dummy::DummyProvider;
 pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
 
 impl ShorthandModelConfig for EmbeddingModelConfig {
-    const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "vllm::"];
+    const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
+        "openai::",
+        "vllm::",
+        "together::",
+        "mistral::",
+        "fireworks::",
+    ];
     const MODEL_TYPE: &str = "Embedding model";
     async fn from_shorthand(provider_type: &str, model_name: &str) -> Result<Self, Error> {
         let model_name = model_name.to_string();
@@ -51,6 +60,15 @@ impl ShorthandModelConfig for EmbeddingModelConfig {
                 })?;
                 EmbeddingProviderConfig::VLLM(VLLMProvider::new(model_name, default_url, None)?)
             }
+            "together" => {
+                EmbeddingProviderConfig::Together(TogetherProvider::new(model_name, None, false)?)
+            }
+            "fireworks" => {
+                EmbeddingProviderConfig::Fireworks(FireworksProvider::new(model_name, None, false)?)
+            }
+            "mistral" => EmbeddingProviderConfig::Mistral(
+                crate::inference::providers::mistral::MistralProvider::new(model_name, None)?,
+            ),
             #[cfg(any(test, feature = "e2e_tests"))]
             "dummy" => EmbeddingProviderConfig::Dummy(DummyProvider::new(model_name, None)?),
             _ => {
@@ -360,8 +378,12 @@ pub trait EmbeddingProvider {
 
 #[derive(Debug)]
 pub enum EmbeddingProviderConfig {
+    Azure(AzureProvider),
     OpenAI(OpenAIProvider),
     VLLM(VLLMProvider),
+    Together(TogetherProvider),
+    Fireworks(FireworksProvider),
+    Mistral(crate::inference::providers::mistral::MistralProvider),
     #[cfg(any(test, feature = "e2e_tests"))]
     Dummy(DummyProvider),
 }
@@ -379,8 +401,12 @@ impl UninitializedEmbeddingProviderConfig {
     ) -> Result<EmbeddingProviderConfig, Error> {
         let provider_config = self.config.load(provider_types)?;
         Ok(match provider_config {
+            ProviderConfig::Azure(provider) => EmbeddingProviderConfig::Azure(provider),
             ProviderConfig::OpenAI(provider) => EmbeddingProviderConfig::OpenAI(provider),
             ProviderConfig::VLLM(provider) => EmbeddingProviderConfig::VLLM(provider),
+            ProviderConfig::Together(provider) => EmbeddingProviderConfig::Together(provider),
+            ProviderConfig::Fireworks(provider) => EmbeddingProviderConfig::Fireworks(provider),
+            ProviderConfig::Mistral(provider) => EmbeddingProviderConfig::Mistral(provider),
             #[cfg(any(test, feature = "e2e_tests"))]
             ProviderConfig::Dummy(provider) => EmbeddingProviderConfig::Dummy(provider),
             _ => {
@@ -402,10 +428,22 @@ impl EmbeddingProvider for EmbeddingProviderConfig {
         dynamic_api_keys: &InferenceCredentials,
     ) -> Result<EmbeddingProviderResponse, Error> {
         match self {
+            EmbeddingProviderConfig::Azure(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
             EmbeddingProviderConfig::OpenAI(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             EmbeddingProviderConfig::VLLM(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
+            EmbeddingProviderConfig::Together(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
+            EmbeddingProviderConfig::Fireworks(provider) => {
+                provider.embed(request, client, dynamic_api_keys).await
+            }
+            EmbeddingProviderConfig::Mistral(provider) => {
                 provider.embed(request, client, dynamic_api_keys).await
             }
             #[cfg(any(test, feature = "e2e_tests"))]

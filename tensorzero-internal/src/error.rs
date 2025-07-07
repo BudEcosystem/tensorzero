@@ -313,6 +313,9 @@ pub enum ErrorDetails {
     OutputValidation {
         source: Box<Error>,
     },
+    ModelNotFound {
+        name: String,
+    },
     ProviderNotFound {
         provider_name: String,
     },
@@ -396,6 +399,10 @@ pub enum ErrorDetails {
         capability: String,
         provider: String,
     },
+    ModelNotConfiguredForCapability {
+        model_name: String,
+        capability: String,
+    },
 }
 
 impl ErrorDetails {
@@ -466,6 +473,7 @@ impl ErrorDetails {
             ErrorDetails::Observability { .. } => tracing::Level::ERROR,
             ErrorDetails::OutputParsing { .. } => tracing::Level::WARN,
             ErrorDetails::OutputValidation { .. } => tracing::Level::WARN,
+            ErrorDetails::ModelNotFound { .. } => tracing::Level::WARN,
             ErrorDetails::ProviderNotFound { .. } => tracing::Level::ERROR,
             ErrorDetails::Serialization { .. } => tracing::Level::ERROR,
             ErrorDetails::StreamError { .. } => tracing::Level::ERROR,
@@ -489,6 +497,7 @@ impl ErrorDetails {
             ErrorDetails::KafkaProducer { .. } => tracing::Level::ERROR,
             ErrorDetails::KafkaSerialization { .. } => tracing::Level::ERROR,
             ErrorDetails::CapabilityNotSupported { .. } => tracing::Level::WARN,
+            ErrorDetails::ModelNotConfiguredForCapability { .. } => tracing::Level::WARN,
         }
     }
 
@@ -561,6 +570,7 @@ impl ErrorDetails {
             ErrorDetails::Observability { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::OutputParsing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::OutputValidation { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorDetails::ModelNotFound { .. } => StatusCode::NOT_FOUND,
             ErrorDetails::ProviderNotFound { .. } => StatusCode::NOT_FOUND,
             ErrorDetails::Serialization { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::StreamError { .. } => StatusCode::INTERNAL_SERVER_ERROR,
@@ -590,6 +600,7 @@ impl ErrorDetails {
             ErrorDetails::KafkaProducer { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::KafkaSerialization { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::CapabilityNotSupported { .. } => StatusCode::BAD_REQUEST,
+            ErrorDetails::ModelNotConfiguredForCapability { .. } => StatusCode::BAD_REQUEST,
         }
     }
 
@@ -926,6 +937,9 @@ impl std::fmt::Display for ErrorDetails {
             ErrorDetails::OutputValidation { source } => {
                 write!(f, "Output validation failed with messages: {source}")
             }
+            ErrorDetails::ModelNotFound { name } => {
+                write!(f, "Model not found: {name}")
+            }
             ErrorDetails::ProviderNotFound { provider_name } => {
                 write!(f, "Provider not found: {provider_name}")
             }
@@ -1009,11 +1023,40 @@ impl std::fmt::Display for ErrorDetails {
                     "Provider `{provider}` does not support capability `{capability}`"
                 )
             }
+            ErrorDetails::ModelNotConfiguredForCapability {
+                model_name,
+                capability,
+            } => {
+                write!(
+                    f,
+                    "Model `{model_name}` is not configured to support capability `{capability}`. Add `endpoints = [\"{capability}\"]` to the model configuration."
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for Error {}
+
+impl Error {
+    /// Convert error to OpenAI-compatible error format
+    pub fn to_openai_error(&self) -> serde_json::Value {
+        json!({
+            "error": {
+                "message": self.to_string(),
+                "type": match self.get_details() {
+                    ErrorDetails::InvalidRequest { .. } => "invalid_request_error",
+                    ErrorDetails::ApiKeyMissing { .. } => "authentication_error",
+                    ErrorDetails::BadCredentialsPreInference { .. } => "authentication_error",
+                    ErrorDetails::CapabilityNotSupported { .. } => "invalid_request_error",
+                    ErrorDetails::InferenceServer { .. } => "server_error",
+                    _ => "internal_error"
+                },
+                "code": None::<String>
+            }
+        })
+    }
+}
 
 impl IntoResponse for Error {
     /// Log the error and convert it into an Axum response
@@ -1059,6 +1102,26 @@ mod tests {
             formatted,
             "Provider `embedding_only_model` does not support capability `chat`"
         );
+    }
+
+    #[test]
+    fn test_model_not_configured_for_capability_error() {
+        let error = Error::new(ErrorDetails::ModelNotConfiguredForCapability {
+            model_name: "mistral-embed".to_string(),
+            capability: "embedding".to_string(),
+        });
+
+        // Test error message
+        assert_eq!(
+            error.to_string(),
+            "Model `mistral-embed` is not configured to support capability `embedding`. Add `endpoints = [\"embedding\"]` to the model configuration."
+        );
+
+        // Test status code
+        assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
+
+        // Test log level
+        assert_eq!(error.get_details().level(), tracing::Level::WARN);
     }
 
     #[test]

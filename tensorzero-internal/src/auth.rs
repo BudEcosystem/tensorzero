@@ -18,10 +18,13 @@ pub struct ApiKeyMetadata {
 pub type APIConfig = HashMap<String, ApiKeyMetadata>;
 
 // Common error response helper
-fn auth_error_response(status: StatusCode, error_type: &str, message: &str) -> Response {
+fn auth_error_response(status: StatusCode, message: &str) -> Response {
     let body = serde_json::json!({
-        "type": error_type,
-        "error": message
+        "error": {
+            "message": message,
+            "type": "invalid_request_error",
+            "code": status.as_u16()
+        }
     });
     (status, axum::Json(body)).into_response()
 }
@@ -84,7 +87,6 @@ pub async fn require_api_key(
         None => {
             return Err(auth_error_response(
                 StatusCode::UNAUTHORIZED,
-                "missing_authorization",
                 "Missing authorization header",
             ))
         }
@@ -94,73 +96,75 @@ pub async fn require_api_key(
     if api_config.is_err() {
         return Err(auth_error_response(
             StatusCode::UNAUTHORIZED,
-            "invalid_api_key",
             "Invalid API key",
         ));
     }
 
-    // Parse the JSON body to validate and extract model name
-    let val: Value = match serde_json::from_slice(&bytes) {
-        Ok(v) => v,
-        Err(_) => {
-            return Err(auth_error_response(
-                StatusCode::BAD_REQUEST,
-                "invalid_request_body",
-                "Invalid request body",
-            ))
+    // Check if this is a batch or file endpoint (which don't require model validation)
+    let path = parts.uri.path();
+    let is_batch_or_file_endpoint =
+        path.starts_with("/v1/batches") || path.starts_with("/v1/files");
+
+    let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
+
+    if !is_batch_or_file_endpoint {
+        // Parse the JSON body to validate and extract model name
+        let val: Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(auth_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "Invalid request body",
+                ))
+            }
+        };
+
+        let model = match val.get("model").and_then(|v| v.as_str()) {
+            Some(m) => m,
+            None => {
+                return Err(auth_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "Missing model name in request body",
+                ))
+            }
+        };
+
+        // We already checked that api_config is Ok in the if statement above
+        #[expect(clippy::unwrap_used)]
+        let api_config = api_config.unwrap();
+        let metadata = match api_config.get(model) {
+            Some(v) => v,
+            None => {
+                return Err(auth_error_response(
+                    StatusCode::NOT_FOUND,
+                    &format!("Model not found: {model}"),
+                ))
+            }
+        };
+
+        // Add the model name as a custom header for downstream handlers
+        if let Ok(header_value) = model.parse() {
+            request
+                .headers_mut()
+                .insert("x-tensorzero-model-name", header_value);
         }
-    };
 
-    let model = match val.get("model").and_then(|v| v.as_str()) {
-        Some(m) => m,
-        None => {
-            return Err(auth_error_response(
-                StatusCode::BAD_REQUEST,
-                "invalid_request_body",
-                "Missing model name in request body",
-            ))
+        // Add metadata headers for observability
+        if let Ok(header_value) = metadata.project_id.parse() {
+            request
+                .headers_mut()
+                .insert("x-tensorzero-project-id", header_value);
         }
-    };
-
-    // We already checked that api_config is Ok in the if statement above
-    #[expect(clippy::unwrap_used)]
-    let api_config = api_config.unwrap();
-    let metadata = match api_config.get(model) {
-        Some(v) => v,
-        None => {
-            return Err(auth_error_response(
-                StatusCode::NOT_FOUND,
-                "model_not_found",
-                "Model not found in API key",
-            ))
+        if let Ok(header_value) = metadata.endpoint_id.parse() {
+            request
+                .headers_mut()
+                .insert("x-tensorzero-endpoint-id", header_value);
         }
-    };
-
-    // Create request without modifying the body
-    let mut request = Request::from_parts(parts, Body::from(bytes));
-
-    // Add the model name as a custom header for downstream handlers
-    if let Ok(header_value) = model.parse() {
-        request
-            .headers_mut()
-            .insert("x-tensorzero-model-name", header_value);
-    }
-
-    // Add metadata headers for observability
-    if let Ok(header_value) = metadata.project_id.parse() {
-        request
-            .headers_mut()
-            .insert("x-tensorzero-project-id", header_value);
-    }
-    if let Ok(header_value) = metadata.endpoint_id.parse() {
-        request
-            .headers_mut()
-            .insert("x-tensorzero-endpoint-id", header_value);
-    }
-    if let Ok(header_value) = metadata.model_id.parse() {
-        request
-            .headers_mut()
-            .insert("x-tensorzero-model-id", header_value);
+        if let Ok(header_value) = metadata.model_id.parse() {
+            request
+                .headers_mut()
+                .insert("x-tensorzero-model-id", header_value);
+        }
     }
 
     Ok(next.run(request).await)

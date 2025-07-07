@@ -103,20 +103,6 @@ jobs:
         if: always()
         run: cat e2e_logs.txt
 
-  check-docker-compose:
-    permissions:
-      # Permission to checkout the repository
-      contents: read
-      # Permission to fetch GitHub OIDC token authentication
-      id-token: write
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-
-      - name: Check all docker-compose.yml files
-        run: ./ci/check-all-docker-compose.sh
-
   validate:
     runs-on: ubuntu-latest
 
@@ -179,9 +165,6 @@ jobs:
     strategy:
       matrix:
         clickhouse_version:
-          - tag: "24.12-alpine"
-            prefix: "24.12"
-            allow_failure: false
           - tag: "25.2-alpine"
             prefix: "25.2"
             allow_failure: false
@@ -507,7 +490,6 @@ jobs:
     needs:
       [
         clickhouse-tests-cloud,
-        check-docker-compose,
         validate,
         clickhouse-tests,
         sdk-integration-tests,

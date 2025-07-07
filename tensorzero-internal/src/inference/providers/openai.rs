@@ -34,6 +34,7 @@ use crate::images::{
     ImageGenerationProvider, ImageGenerationProviderResponse, ImageGenerationRequest,
     ImageVariationProvider, ImageVariationProviderResponse, ImageVariationRequest,
 };
+use crate::inference::providers::batch::BatchProvider;
 use crate::inference::providers::provider_trait::InferenceProvider;
 use crate::inference::types::batch::{BatchRequestRow, PollBatchInferenceResponse};
 use crate::inference::types::batch::{
@@ -54,6 +55,9 @@ use crate::model::{build_creds_caching_default, Credential, CredentialLocation, 
 use crate::moderation::{
     ModerationCategories, ModerationCategoryScores, ModerationInput, ModerationProvider,
     ModerationProviderResponse, ModerationRequest, ModerationResult,
+};
+use crate::openai_batch::{
+    ListBatchesParams, ListBatchesResponse, OpenAIBatchObject, OpenAIFileObject,
 };
 use crate::tool::{ToolCall, ToolCallChunk, ToolChoice, ToolConfig};
 
@@ -663,7 +667,11 @@ impl InferenceProvider for OpenAIProvider {
         let status: BatchStatus = response.status.into();
         let raw_response = text;
         match status {
-            BatchStatus::Pending => Ok(PollBatchInferenceResponse::Pending {
+            BatchStatus::Pending
+            | BatchStatus::Validating
+            | BatchStatus::InProgress
+            | BatchStatus::Finalizing
+            | BatchStatus::Cancelling => Ok(PollBatchInferenceResponse::Pending {
                 raw_request,
                 raw_response,
             }),
@@ -689,10 +697,12 @@ impl InferenceProvider for OpenAIProvider {
                     .await?;
                 Ok(PollBatchInferenceResponse::Completed(response))
             }
-            BatchStatus::Failed => Ok(PollBatchInferenceResponse::Failed {
-                raw_request,
-                raw_response,
-            }),
+            BatchStatus::Failed | BatchStatus::Expired | BatchStatus::Cancelled => {
+                Ok(PollBatchInferenceResponse::Failed {
+                    raw_request,
+                    raw_response,
+                })
+            }
         }
     }
 }
@@ -1278,7 +1288,7 @@ impl TextToSpeechProvider for OpenAIProvider {
             speed: Option<f32>,
         }
 
-        let voice_str = match request.voice {
+        let voice_str = match &request.voice {
             AudioVoice::Alloy => "alloy",
             AudioVoice::Ash => "ash",
             AudioVoice::Ballad => "ballad",
@@ -1290,6 +1300,13 @@ impl TextToSpeechProvider for OpenAIProvider {
             AudioVoice::Sage => "sage",
             AudioVoice::Shimmer => "shimmer",
             AudioVoice::Verse => "verse",
+            AudioVoice::Other(voice_name) => {
+                return Err(Error::new(ErrorDetails::InvalidRequest {
+                    message: format!(
+                        "OpenAI TTS does not support voice: '{voice_name}'. Supported voices: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse"
+                    ),
+                }));
+            }
         };
 
         let format_str = request.response_format.as_ref().map(|f| match f {
@@ -4148,6 +4165,406 @@ impl RealtimeTranscriptionProvider for OpenAIProvider {
                 PROVIDER_TYPE,
             ))
         }
+    }
+}
+
+// BatchProvider implementation for OpenAI
+#[async_trait::async_trait]
+impl BatchProvider for OpenAIProvider {
+    async fn upload_file(
+        &self,
+        content: Vec<u8>,
+        filename: String,
+        purpose: String,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIFileObject, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let form = Form::new()
+            .text("purpose", purpose)
+            .part("file", Part::bytes(content).file_name(filename));
+
+        let mut request_builder = client.post(format!("{api_base}/files"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder.multipart(form).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error uploading file: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error("", status, &error_text, PROVIDER_TYPE));
+        }
+
+        let file_object: OpenAIFileObject = response.json().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error parsing file response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(file_object)
+    }
+
+    async fn get_file(
+        &self,
+        file_id: &str,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIFileObject, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let mut request_builder = client.get(format!("{api_base}/files/{file_id}"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error getting file: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error("", status, &error_text, PROVIDER_TYPE));
+        }
+
+        let file_object: OpenAIFileObject = response.json().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error parsing file response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(file_object)
+    }
+
+    async fn get_file_content(
+        &self,
+        file_id: &str,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<Vec<u8>, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let mut request_builder = client.get(format!("{api_base}/files/{file_id}/content"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!(
+                    "Error getting file content: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error("", status, &error_text, PROVIDER_TYPE));
+        }
+
+        let content = response.bytes().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error reading file content: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(content.to_vec())
+    }
+
+    async fn delete_file(
+        &self,
+        file_id: &str,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIFileObject, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let mut request_builder = client.delete(format!("{api_base}/files/{file_id}"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error deleting file: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error("", status, &error_text, PROVIDER_TYPE));
+        }
+
+        let file_object: OpenAIFileObject = response.json().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error parsing file response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(file_object)
+    }
+
+    async fn create_batch(
+        &self,
+        input_file_id: String,
+        endpoint: String,
+        completion_window: String,
+        metadata: Option<std::collections::HashMap<String, String>>,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIBatchObject, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let mut body = json!({
+            "input_file_id": input_file_id,
+            "endpoint": endpoint,
+            "completion_window": completion_window,
+        });
+
+        if let Some(metadata) = metadata {
+            body["metadata"] = json!(metadata);
+        }
+
+        let mut request_builder = client.post(format!("{api_base}/batches"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder.json(&body).send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error creating batch: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: Some(serde_json::to_string(&body).unwrap_or_default()),
+                raw_response: None,
+            })
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error(
+                &serde_json::to_string(&body).unwrap_or_default(),
+                status,
+                &error_text,
+                PROVIDER_TYPE,
+            ));
+        }
+
+        let batch_object: OpenAIBatchObject = response.json().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error parsing batch response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: Some(serde_json::to_string(&body).unwrap_or_default()),
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(batch_object)
+    }
+
+    async fn get_batch(
+        &self,
+        batch_id: &str,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIBatchObject, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let mut request_builder = client.get(format!("{api_base}/batches/{batch_id}"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error getting batch: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error("", status, &error_text, PROVIDER_TYPE));
+        }
+
+        let batch_object: OpenAIBatchObject = response.json().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error parsing batch response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(batch_object)
+    }
+
+    async fn list_batches(
+        &self,
+        params: ListBatchesParams,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<ListBatchesResponse, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let mut query_params = vec![("limit", params.limit.to_string())];
+        if let Some(after) = &params.after {
+            query_params.push(("after", after.clone()));
+        }
+
+        let mut request_builder = client.get(format!("{api_base}/batches"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(|e| {
+                Error::new(ErrorDetails::InferenceClient {
+                    status_code: e.status(),
+                    message: format!("Error listing batches: {}", DisplayOrDebugGateway::new(e)),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    raw_request: None,
+                    raw_response: None,
+                })
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error("", status, &error_text, PROVIDER_TYPE));
+        }
+
+        let list_response: ListBatchesResponse = response.json().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error parsing list response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(list_response)
+    }
+
+    async fn cancel_batch(
+        &self,
+        batch_id: &str,
+        client: &reqwest::Client,
+        api_keys: &InferenceCredentials,
+    ) -> Result<OpenAIBatchObject, Error> {
+        let api_key = self.credentials.get_api_key(api_keys)?;
+        let api_base = self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL);
+
+        let mut request_builder = client.post(format!("{api_base}/batches/{batch_id}/cancel"));
+
+        if let Some(api_key) = api_key {
+            request_builder = request_builder.bearer_auth(api_key.expose_secret());
+        }
+
+        let response = request_builder.send().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceClient {
+                status_code: e.status(),
+                message: format!("Error cancelling batch: {}", DisplayOrDebugGateway::new(e)),
+                provider_type: PROVIDER_TYPE.to_string(),
+                raw_request: None,
+                raw_response: None,
+            })
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(handle_openai_error("", status, &error_text, PROVIDER_TYPE));
+        }
+
+        let batch_object: OpenAIBatchObject = response.json().await.map_err(|e| {
+            Error::new(ErrorDetails::InferenceServer {
+                message: format!(
+                    "Error parsing batch response: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+                raw_request: None,
+                raw_response: None,
+                provider_type: PROVIDER_TYPE.to_string(),
+            })
+        })?;
+        Ok(batch_object)
     }
 }
 

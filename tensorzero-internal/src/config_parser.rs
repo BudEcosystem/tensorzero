@@ -411,11 +411,23 @@ impl<'c> Config<'c> {
                                 let model_provider = ModelProvider {
                                     name: provider_name.clone(),
                                     config: match provider_config {
+                                        crate::embeddings::EmbeddingProviderConfig::Azure(p) => {
+                                            ProviderConfig::Azure(p)
+                                        }
                                         crate::embeddings::EmbeddingProviderConfig::OpenAI(p) => {
                                             ProviderConfig::OpenAI(p)
                                         }
                                         crate::embeddings::EmbeddingProviderConfig::VLLM(p) => {
                                             ProviderConfig::VLLM(p)
+                                        }
+                                        crate::embeddings::EmbeddingProviderConfig::Together(p) => {
+                                            ProviderConfig::Together(p)
+                                        }
+                                        crate::embeddings::EmbeddingProviderConfig::Fireworks(
+                                            p,
+                                        ) => ProviderConfig::Fireworks(p),
+                                        crate::embeddings::EmbeddingProviderConfig::Mistral(p) => {
+                                            ProviderConfig::Mistral(p)
                                         }
                                         #[cfg(any(test, feature = "e2e_tests"))]
                                         crate::embeddings::EmbeddingProviderConfig::Dummy(p) => {
